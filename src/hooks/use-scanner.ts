@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useCallback, useRef } from 'react'
+import { useEffect, useCallback, useRef, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
 
 interface ScannerConfig {
@@ -16,11 +16,29 @@ const DEFAULT_CONFIG: ScannerConfig = {
 }
 
 export function useScanner(config: Partial<ScannerConfig> = {}) {
-  const cfg = { ...DEFAULT_CONFIG, ...config }
+  // Stabilize config with useMemo - only recreate if config values actually change
+  const cfg = useMemo(() => ({ ...DEFAULT_CONFIG, ...config }), [config.minChars, config.maxInterKeyDelay, config.terminatorKey])
+
   const scanBarcode = useAppStore((s) => s.scanBarcode)
-  const session = useAppStore((s) => s.session)
   const setScannerListening = useAppStore((s) => s.setScannerListening)
-  const isScanning = useAppStore((s) => s.isScanning)
+  
+  // Use refs for values that shouldn't trigger re-creation of handleKeyDown
+  const sessionRef = useRef(useAppStore.getState().session)
+  const scanBarcodeRef = useRef(scanBarcode)
+  
+  // Keep refs updated
+  useEffect(() => {
+    sessionRef.current = useAppStore.getState().session
+  })
+  scanBarcodeRef.current = scanBarcode
+
+  // Subscribe to session changes without causing re-renders
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      sessionRef.current = state.session
+    })
+    return unsub
+  }, [])
 
   const bufferRef = useRef<string[]>([])
   const lastKeyTimeRef = useRef<number>(0)
@@ -43,11 +61,12 @@ export function useScanner(config: Partial<ScannerConfig> = {}) {
           bufferRef.current = []
           lastKeyTimeRef.current = 0
 
-          // Only process if session is active
+          // Only process if session is active (use ref to avoid dependency)
+          const session = sessionRef.current
           if (session && session.status === 'active') {
             event.preventDefault()
             event.stopPropagation()
-            scanBarcode(barcode)
+            scanBarcodeRef.current(barcode)
           }
         } else {
           bufferRef.current = []
@@ -106,7 +125,7 @@ export function useScanner(config: Partial<ScannerConfig> = {}) {
       // Prevent the character from appearing elsewhere
       event.preventDefault()
     },
-    [cfg, scanBarcode, session, setScannerListening]
+    [cfg, setScannerListening] // Stable dependencies: cfg is memoized, setScannerListening is a stable Zustand action
   )
 
   useEffect(() => {
@@ -116,12 +135,16 @@ export function useScanner(config: Partial<ScannerConfig> = {}) {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
       }
-      setScannerListening(false)
+      // Don't call setScannerListening(false) in cleanup - it causes infinite loops
+      // The timeout above handles cleanup naturally
     }
-  }, [handleKeyDown, setScannerListening])
+  }, [handleKeyDown])
+
+  const isScanning = useAppStore((s) => s.isScanning)
+  const isListening = useAppStore((s) => s.isScannerListening)
 
   return {
     isScanning,
-    isListening: useAppStore((s) => s.isScannerListening),
+    isListening,
   }
 }

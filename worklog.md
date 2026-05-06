@@ -155,3 +155,32 @@ Stage Summary:
 - Micro-interactions: framer-motion animations throughout
 - Skeleton screens: elegant loading states during OCR/Excel processing
 - All lint checks pass cleanly
+
+---
+Task ID: 10
+Agent: Main
+Task: Fix "Maximum update depth exceeded" infinite loop error
+
+Work Log:
+- Diagnosed root cause: useScanner hook creating infinite re-render loop
+  - cfg object recreated every render: `const cfg = { ...DEFAULT_CONFIG, ...config }`
+  - This made handleKeyDown recreate every render (cfg was in dependency array)
+  - useEffect in useScanner re-ran when handleKeyDown changed
+  - Cleanup function called setScannerListening(false) → store update → re-render → loop
+- Fixed useScanner hook:
+  - Stabilized cfg with useMemo (dependencies on individual config values, not the object)
+  - Used useRef for session and scanBarcode to prevent unnecessary handleKeyDown recreation
+  - Subscribed to session changes via useAppStore.subscribe (no re-renders)
+  - Removed setScannerListening(false) from cleanup to prevent cascading state updates
+- Fixed all useAppStore() calls across components to use individual selectors instead of destructuring
+  - Prevents re-rendering on unrelated state changes
+  - AppHeader, UploadPanel, QuickStats, ProductList, RecentScansPanel, ReportView, main page
+- Added loadedSessionRef to main component to prevent duplicate data fetches
+- Verified lint passes cleanly (0 errors, 0 warnings)
+- Verified API endpoints work correctly when server is running
+
+Stage Summary:
+- Root cause: useScanner hook's unstable cfg object caused infinite re-render loop
+- All useAppStore() calls now use individual selectors for optimal performance
+- "Maximum update depth exceeded" error resolved
+- App renders and API functions correctly

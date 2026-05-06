@@ -142,7 +142,12 @@ function formatDate(dateStr: string): string {
 
 // Header Component
 function AppHeader() {
-  const { session, isSocketConnected, isScannerListening, fetchProducts, products, productSummary } = useAppStore()
+  const session = useAppStore((s) => s.session)
+  const isSocketConnected = useAppStore((s) => s.isSocketConnected)
+  const isScannerListening = useAppStore((s) => s.isScannerListening)
+  const fetchProducts = useAppStore((s) => s.fetchProducts)
+  const products = useAppStore((s) => s.products)
+  const productSummary = useAppStore((s) => s.productSummary)
   const { theme, setTheme } = useTheme()
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false)
   const [showResetDialog, setShowResetDialog] = useState(false)
@@ -382,7 +387,11 @@ function AppHeader() {
 
 // Upload Panel Component
 function UploadPanel() {
-  const { uploadFiles, isUploading, session, ocrMethod, ocrConfidence } = useAppStore()
+  const uploadFiles = useAppStore((s) => s.uploadFiles)
+  const isUploading = useAppStore((s) => s.isUploading)
+  const session = useAppStore((s) => s.session)
+  const ocrMethod = useAppStore((s) => s.ocrMethod)
+  const ocrConfidence = useAppStore((s) => s.ocrConfidence)
   const [excelFile, setExcelFile] = useState<File | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [uploadResult, setUploadResult] = useState<{
@@ -638,7 +647,8 @@ function UploadPanel() {
 
 // Quick Stats Component
 function QuickStats() {
-  const { productSummary, scanEvents } = useAppStore()
+  const productSummary = useAppStore((s) => s.productSummary)
+  const scanEvents = useAppStore((s) => s.scanEvents)
 
   if (!productSummary || productSummary.total === 0) {
     return (
@@ -826,7 +836,9 @@ function ProductRow({ product }: { product: ProductData }) {
 
 // Product List Component
 function ProductList() {
-  const { products, productSummary, isLoading } = useAppStore()
+  const products = useAppStore((s) => s.products)
+  const productSummary = useAppStore((s) => s.productSummary)
+  const isLoading = useAppStore((s) => s.isLoading)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortBy, setSortBy] = useState('code')
@@ -1109,7 +1121,7 @@ function ScanNotification({ scan, onDismiss }: { scan: ScanResult; onDismiss: ()
 
 // Recent Scans List
 function RecentScansPanel() {
-  const { scanEvents } = useAppStore()
+  const scanEvents = useAppStore((s) => s.scanEvents)
 
   return (
     <motion.div {...fadeInUp}>
@@ -1163,7 +1175,9 @@ function RecentScansPanel() {
 
 // Report View
 function ReportView() {
-  const { report, fetchReport, session } = useAppStore()
+  const report = useAppStore((s) => s.report)
+  const fetchReport = useAppStore((s) => s.fetchReport)
+  const session = useAppStore((s) => s.session)
 
   const isLoading = !report && session?.status === 'closed'
 
@@ -1334,7 +1348,15 @@ function ReportView() {
 // ─── Main Page Component ─────────────────────────────────────────────
 
 export default function ChequeoRutaChicaPage() {
-  const { session, fetchSession, fetchProducts, fetchRecentScans, lastScan, initSocket, disconnectSocket, products, productSummary } = useAppStore()
+  const session = useAppStore((s) => s.session)
+  const fetchSession = useAppStore((s) => s.fetchSession)
+  const fetchProducts = useAppStore((s) => s.fetchProducts)
+  const fetchRecentScans = useAppStore((s) => s.fetchRecentScans)
+  const lastScan = useAppStore((s) => s.lastScan)
+  const initSocket = useAppStore((s) => s.initSocket)
+  const disconnectSocket = useAppStore((s) => s.disconnectSocket)
+  const products = useAppStore((s) => s.products)
+  const productSummary = useAppStore((s) => s.productSummary)
   const [activeNotification, setActiveNotification] = useState<ScanResult | null>(null)
   const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { isListening } = useScanner()
@@ -1351,9 +1373,13 @@ export default function ChequeoRutaChicaPage() {
     }
   }, [])
 
+  // Track which session ID we've loaded data for
+  const loadedSessionRef = useRef<string | null>(null)
+  
   // Load data when session is available
   useEffect(() => {
-    if (session) {
+    if (session && loadedSessionRef.current !== session.id) {
+      loadedSessionRef.current = session.id
       fetchProducts()
       fetchRecentScans()
     }
