@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Daily scanning session
+model Session {
+  id        String   @id @default(cuid())
+  date      String   @unique // YYYY-MM-DD format
+  status    String   @default("active") // active | closed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products    Product[]
+  assignments Assignment[]
+  scanEvents  ScanEvent[]
+}
+
+// Product catalog from Excel (Fuente 1 - Totales)
+model Product {
+  id             String   @id @default(cuid())
+  code           String   // Product code (e.g., "12194", "MN076")
+  description    String   // Product description
+  totalRequested Int      @default(0) // Total quantity requested (from Excel)
+  totalScanned   Int      @default(0) // Total quantity scanned so far
+  bulto          Int      @default(0) // Bulto (package) number
+  origen         String   @default("R") // Origin: R = Regular, G = Checked
+  status         String   @default("pending") // pending | partial | complete | missing
+  sessionId      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  session     Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+
+  @@unique([code, sessionId])
+}
+
+// Worker info from PDF (Fuente 2 - Asignación)
+model Worker {
+  id        String @id @default(cuid())
+  code      String @unique // Worker code (e.g., "2175", "221X", "526X")
+  name      String // Worker name
+  itinerary String @default("0") // Itinerary number
+  rif       String @default("") // Tax ID (RIF)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments Assignment[]
+}
+
+// Worker-Product assignment from PDF (who ordered what)
+model Assignment {
+  id              String   @id @default(cuid())
+  workerId        String
+  productId       String   // Reference to Product.id
+  productCode     String   // Denormalized for quick lookup
+  quantity        Int      @default(0) // Quantity requested by this worker
+  scannedQuantity Int      @default(0) // How many have been scanned for this worker
+  sessionId       String
+  status          String   @default("pending") // pending | assigned | complete
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  worker  Worker  @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([workerId, productId, sessionId])
+}
+
+// Scan event log
+model ScanEvent {
+  id          String   @id @default(cuid())
+  barcode     String   // The barcode that was scanned
+  productCode String   // Matched product code
+  workerId    String?  // Auto-assigned worker
+  itinerary   String?  // Auto-assigned itinerary
+  assignedTo  String?  // Worker name
+  sessionId   String
+  createdAt   DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
