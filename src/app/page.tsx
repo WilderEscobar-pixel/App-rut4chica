@@ -1179,13 +1179,22 @@ function ReportView() {
   const fetchReport = useAppStore((s) => s.fetchReport)
   const session = useAppStore((s) => s.session)
 
-  const isLoading = !report && session?.status === 'closed'
+  // Track whether we've already attempted to fetch the report to prevent infinite loops
+  // if fetchReport() returns null/undefined (e.g. API error or empty response)
+  const fetchReportAttemptedRef = useRef(false)
 
   useEffect(() => {
-    if (session?.status === 'closed' && !report) {
+    if (session?.status === 'closed' && !fetchReportAttemptedRef.current) {
+      fetchReportAttemptedRef.current = true
       fetchReport()
     }
-  }, [session?.status, report, fetchReport])
+    // Reset when session is no longer closed (e.g. new session started)
+    if (session?.status !== 'closed') {
+      fetchReportAttemptedRef.current = false
+    }
+  }, [session?.status, fetchReport])
+
+  const isLoading = !report && session?.status === 'closed'
 
   const handleExportCSV = () => {
     if (!report) return
@@ -1361,8 +1370,11 @@ export default function ChequeoRutaChicaPage() {
   const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { isListening } = useScanner()
 
-  // Initialize on mount
+  // Initialize on mount (once only)
+  const hasInitializedRef = useRef(false)
   useEffect(() => {
+    if (hasInitializedRef.current) return
+    hasInitializedRef.current = true
     const init = async () => {
       await fetchSession()
       initSocket()
@@ -1375,15 +1387,16 @@ export default function ChequeoRutaChicaPage() {
 
   // Track which session ID we've loaded data for
   const loadedSessionRef = useRef<string | null>(null)
+  const sessionId = session?.id
   
-  // Load data when session is available
+  // Load data when session ID changes (use sessionId instead of session to avoid reference-based re-triggers)
   useEffect(() => {
-    if (session && loadedSessionRef.current !== session.id) {
-      loadedSessionRef.current = session.id
+    if (sessionId && loadedSessionRef.current !== sessionId) {
+      loadedSessionRef.current = sessionId
       fetchProducts()
       fetchRecentScans()
     }
-  }, [session, fetchProducts, fetchRecentScans])
+  }, [sessionId, fetchProducts, fetchRecentScans])
 
   // Show notification when a new scan occurs
   const [notificationPending, startNotificationTransition] = React.useTransition()

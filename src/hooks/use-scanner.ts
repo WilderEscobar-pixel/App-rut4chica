@@ -26,10 +26,7 @@ export function useScanner(config: Partial<ScannerConfig> = {}) {
   const sessionRef = useRef(useAppStore.getState().session)
   const scanBarcodeRef = useRef(scanBarcode)
   
-  // Keep refs updated
-  useEffect(() => {
-    sessionRef.current = useAppStore.getState().session
-  })
+  // Keep scanBarcodeRef updated (sessionRef is handled by the subscription below)
   scanBarcodeRef.current = scanBarcode
 
   // Subscribe to session changes without causing re-renders
