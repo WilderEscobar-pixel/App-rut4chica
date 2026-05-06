@@ -428,7 +428,7 @@ export async function POST(request: NextRequest) {
         success: false,
         analysis:
           'El servicio de IA no está disponible en este momento. Por favor, verifica tu conexión e intenta de nuevo más tarde. Si el problema persiste, contacta al administrador del sistema.',
-        type: (body as { type?: string })?.type || 'unknown',
+        type: 'unknown',
       })
     }
 
@@ -436,7 +436,7 @@ export async function POST(request: NextRequest) {
       {
         success: false,
         analysis: `Error al procesar el análisis: ${errorMessage}. Por favor, intenta de nuevo.`,
-        type: (body as { type?: string })?.type || 'unknown',
+        type: 'unknown',
       },
       { status: 500 }
     )
