@@ -8,7 +8,8 @@ import {
   ChevronDown, ChevronUp, RefreshCw, Lock, Sun, Moon,
   PackageCheck, PackageX, ClipboardList,
   FileSpreadsheet, FileText, Loader2, Scan, CircleDot,
-  RotateCcw, Zap, Eye, Sparkles, Volume2, VolumeX
+  RotateCcw, Zap, Eye, Sparkles, Volume2, VolumeX,
+  MessageSquare, Send, Bot, User, ChevronRight, Brain
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
@@ -47,6 +48,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 
 // ─── Animation Variants ──────────────────────────────────────────────
 
@@ -727,6 +730,478 @@ function QuickStats() {
           )}
         </CardContent>
       </Card>
+    </motion.div>
+  )
+}
+
+// ─── AI Components ──────────────────────────────────────────────────
+
+// Simple markdown-like formatter for AI responses
+function formatAIMessage(text: string): React.ReactNode[] {
+  const lines = text.split('\n')
+  const nodes: React.ReactNode[] = []
+  lines.forEach((line, i) => {
+    if (line.trim() === '') {
+      nodes.push(<br key={`br-${i}`} />)
+      return
+    }
+    // Handle bold: **text**
+    const parts = line.split(/(\*\*[^*]+\*\*)/g)
+    const formatted = parts.map((part, j) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={`b-${i}-${j}`} className="font-semibold text-foreground">{part.slice(2, -2)}</strong>
+      }
+      return part
+    })
+    nodes.push(<span key={`line-${i}`}>{formatted}</span>)
+    if (i < lines.length - 1) nodes.push(<br key={`br2-${i}`} />)
+  })
+  return nodes
+}
+
+// AI Chat Message type
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+// AIChatPanel - Floating AI chat assistant
+function AIChatPanel() {
+  const session = useAppStore((s) => s.session)
+  const products = useAppStore((s) => s.products)
+  const productSummary = useAppStore((s) => s.productSummary)
+  const scanEvents = useAppStore((s) => s.scanEvents)
+
+  const [isOpen, setIsOpen] = useState(false)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [input, setInput] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [hasUnread, setHasUnread] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages, scrollToBottom])
+
+  // Mark unread when panel is closed and new AI message arrives
+  useEffect(() => {
+    if (!isOpen && messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+      setHasUnread(true)
+    }
+  }, [messages, isOpen])
+
+  const handleOpen = useCallback(() => {
+    setIsOpen(true)
+    setHasUnread(false)
+    setTimeout(() => inputRef.current?.focus(), 300)
+  }, [])
+
+  const handleSend = useCallback(async () => {
+    const trimmed = input.trim()
+    if (!trimmed || isLoading) return
+
+    const userMessage: ChatMessage = { role: 'user', content: trimmed }
+    setMessages((prev) => [...prev, userMessage])
+    setInput('')
+    setIsLoading(true)
+
+    try {
+      const context = {
+        products: products.slice(0, 50).map((p) => ({
+          code: p.code,
+          description: p.description,
+          status: p.status,
+          totalScanned: p.totalScanned,
+          totalRequested: p.totalRequested,
+        })),
+        summary: productSummary ? {
+          total: productSummary.total,
+          complete: productSummary.complete,
+          partial: productSummary.partial,
+          pending: productSummary.pending,
+          missing: productSummary.missing,
+          totalScanned: productSummary.totalScanned,
+          totalRequested: productSummary.totalRequested,
+        } : null,
+        scanEvents: scanEvents.slice(-20).map((e) => ({
+          productCode: e.productCode,
+          quantity: e.quantity,
+          workerName: e.workerName,
+          timestamp: e.timestamp,
+        })),
+      }
+
+      const history = messages.slice(-10).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }))
+
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmed,
+          sessionId: session?.id || '',
+          context,
+          history,
+        }),
+      })
+
+      const data = await response.json()
+      if (data.success && data.response) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: data.response }])
+      } else {
+        setMessages((prev) => [...prev, { role: 'assistant', content: 'Lo siento, no pude procesar su consulta. Intente nuevamente.' }])
+      }
+    } catch {
+      setMessages((prev) => [...prev, { role: 'assistant', content: 'Error de conexión. Verifique su conexión a internet e intente nuevamente.' }])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [input, isLoading, messages, session, products, productSummary, scanEvents])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }, [handleSend])
+
+  return (
+    <>
+      {/* Floating Chat Button */}
+      <motion.div
+        className="fixed bottom-6 right-6 z-50"
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 20, delay: 0.5 }}
+      >
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <motion.button
+                onClick={isOpen ? () => setIsOpen(false) : handleOpen}
+                className="relative h-14 w-14 rounded-full bg-gradient-to-br from-[#007BFF] to-[#339DFF] shadow-lg shadow-[#007BFF]/30 flex items-center justify-center text-white hover:shadow-xl hover:shadow-[#007BFF]/40 transition-shadow"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <AnimatePresence mode="wait">
+                  {isOpen ? (
+                    <motion.div key="close" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.2 }}>
+                      <XCircle className="h-6 w-6" />
+                    </motion.div>
+                  ) : (
+                    <motion.div key="open" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.2 }}>
+                      <MessageSquare className="h-6 w-6" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                {/* Pulse indicator for unread */}
+                {hasUnread && !isOpen && (
+                  <motion.span
+                    className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 border-2 border-white dark:border-slate-900"
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ repeat: Infinity, duration: 1.5 }}
+                  />
+                )}
+              </motion.button>
+            </TooltipTrigger>
+            <TooltipContent side="left">
+              {isOpen ? 'Cerrar chat' : 'Asistente IA'}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </motion.div>
+
+      {/* Chat Panel */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="fixed bottom-24 right-6 z-50 w-[380px] max-w-[calc(100vw-48px)] h-[520px] max-h-[calc(100vh-140px)] flex flex-col glass-card rounded-2xl shadow-2xl border border-[#007BFF]/20 overflow-hidden"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[#007BFF] to-[#339DFF] text-white">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5" />
+                <span className="font-semibold text-sm">Asistente IA</span>
+              </div>
+              <Badge variant="secondary" className="text-[10px] bg-white/20 text-white border-white/30 hover:bg-white/30">
+                Droguería Nena
+              </Badge>
+            </div>
+
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
+              {messages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground gap-3">
+                  <div className="h-12 w-12 rounded-full bg-[#007BFF]/10 flex items-center justify-center">
+                    <Bot className="h-6 w-6 text-[#007BFF]" />
+                  </div>
+                  <p className="text-sm font-medium">¡Hola! Soy su asistente IA</p>
+                  <p className="text-xs max-w-[260px]">
+                    Puedo ayudarle con consultas sobre el progreso del escaneo, productos faltantes, rendimiento de trabajadores y más.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 mt-1 justify-center">
+                    {['¿Cuántos productos faltan?', 'Resumen del día', '¿Quién va más rápido?'].map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => { setInput(q) }}
+                        className="text-[10px] px-2.5 py-1 rounded-full bg-[#007BFF]/10 text-[#007BFF] hover:bg-[#007BFF]/20 transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {messages.map((msg, idx) => (
+                <motion.div
+                  key={idx}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  {msg.role === 'assistant' && (
+                    <div className="h-7 w-7 rounded-full bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Sparkles className="h-3.5 w-3.5 text-white" />
+                    </div>
+                  )}
+                  <div
+                    className={`max-w-[280px] px-3 py-2 rounded-2xl text-xs leading-relaxed ${
+                      msg.role === 'user'
+                        ? 'bg-[#007BFF] text-white rounded-br-md'
+                        : 'bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm text-foreground rounded-bl-md border border-[#007BFF]/10'
+                    }`}
+                  >
+                    {msg.role === 'assistant' ? formatAIMessage(msg.content) : msg.content}
+                  </div>
+                  {msg.role === 'user' && (
+                    <div className="h-7 w-7 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <User className="h-3.5 w-3.5 text-slate-600 dark:text-slate-300" />
+                    </div>
+                  )}
+                </motion.div>
+              ))}
+              {isLoading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex gap-2 justify-start"
+                >
+                  <div className="h-7 w-7 rounded-full bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center flex-shrink-0">
+                    <Sparkles className="h-3.5 w-3.5 text-white" />
+                  </div>
+                  <div className="px-3 py-2.5 rounded-2xl rounded-bl-md bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border border-[#007BFF]/10">
+                    <div className="flex items-center gap-1.5">
+                      <motion.div className="h-1.5 w-1.5 rounded-full bg-[#007BFF]" animate={{ scale: [1, 1.4, 1] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0 }} />
+                      <motion.div className="h-1.5 w-1.5 rounded-full bg-[#007BFF]" animate={{ scale: [1, 1.4, 1] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.15 }} />
+                      <motion.div className="h-1.5 w-1.5 rounded-full bg-[#007BFF]" animate={{ scale: [1, 1.4, 1] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.3 }} />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input Area */}
+            <div className="border-t border-[#007BFF]/10 p-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+              <div className="flex items-end gap-2">
+                <Textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Escriba su consulta..."
+                  className="min-h-[38px] max-h-[80px] text-xs resize-none rounded-xl border-[#007BFF]/20 focus:border-[#007BFF] bg-white/80 dark:bg-slate-800/80"
+                  rows={1}
+                />
+                <Button
+                  onClick={handleSend}
+                  disabled={!input.trim() || isLoading}
+                  size="icon"
+                  className="h-[38px] w-[38px] rounded-xl bg-gradient-to-br from-[#007BFF] to-[#339DFF] hover:from-[#0056b3] hover:to-[#007BFF] shadow-md shadow-[#007BFF]/20 flex-shrink-0"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
+// AIAnalysisCard - AI Analysis card for sidebar
+function AIAnalysisCard() {
+  const session = useAppStore((s) => s.session)
+  const productSummary = useAppStore((s) => s.productSummary)
+  const [selectedType, setSelectedType] = useState<string>('')
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisResult, setAnalysisResult] = useState<string | null>(null)
+  const [analysisTitle, setAnalysisTitle] = useState('')
+  const [dialogOpen, setDialogOpen] = useState(false)
+
+  const analysisTypes = [
+    { value: 'summary', label: 'Resumen General', icon: BarChart3 },
+    { value: 'missing_analysis', label: 'Análisis de Faltantes', icon: PackageX },
+    { value: 'worker_performance', label: 'Rendimiento de Trabajadores', icon: Brain },
+    { value: 'recommendations', label: 'Recomendaciones', icon: Sparkles },
+  ]
+
+  const handleAnalyze = useCallback(async (type: string) => {
+    if (!session?.id || isAnalyzing) return
+
+    const typeInfo = analysisTypes.find((t) => t.value === type)
+    setAnalysisTitle(typeInfo?.label || 'Análisis')
+    setIsAnalyzing(true)
+    setDialogOpen(true)
+    setAnalysisResult(null)
+
+    try {
+      const response = await fetch('/api/ai/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: session.id,
+          type: type,
+        }),
+      })
+
+      const data = await response.json()
+      if (data.success && data.analysis) {
+        setAnalysisResult(data.analysis)
+      } else {
+        setAnalysisResult('No se pudo generar el análisis. Intente nuevamente más tarde.')
+      }
+    } catch {
+      setAnalysisResult('Error de conexión. Verifique su conexión e intente nuevamente.')
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }, [session, isAnalyzing])
+
+  if (!productSummary || productSummary.total === 0) {
+    return null
+  }
+
+  return (
+    <motion.div {...fadeInUp}>
+      <Card className="glass-card rounded-2xl">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <div className="h-6 w-6 rounded-lg bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center">
+              <Brain className="h-3 w-3 text-white" />
+            </div>
+            Análisis IA
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Obtenga análisis inteligente de su progreso de escaneo
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Select value={selectedType} onValueChange={(val) => setSelectedType(val)}>
+            <SelectTrigger className="w-full h-8 text-xs rounded-xl border-[#007BFF]/20">
+              <Sparkles className="h-3 w-3 mr-1 text-[#007BFF]" />
+              <SelectValue placeholder="Seleccione análisis..." />
+            </SelectTrigger>
+            <SelectContent>
+              {analysisTypes.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  <div className="flex items-center gap-2">
+                    <type.icon className="h-3 w-3" />
+                    {type.label}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            onClick={() => selectedType && handleAnalyze(selectedType)}
+            disabled={!selectedType || isAnalyzing}
+            className="w-full bg-gradient-to-r from-[#007BFF] to-[#339DFF] hover:from-[#0056b3] hover:to-[#007BFF] text-white rounded-xl shadow-md shadow-[#007BFF]/20 h-9 text-xs"
+          >
+            {isAnalyzing ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                Analizando...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3.5 w-3.5 mr-2" />
+                Generar Análisis
+              </>
+            )}
+          </Button>
+
+          {/* Quick analysis buttons */}
+          <div className="grid grid-cols-2 gap-1.5 pt-1">
+            {analysisTypes.slice(0, 4).map((type) => (
+              <motion.button
+                key={type.value}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => handleAnalyze(type.value)}
+                disabled={isAnalyzing}
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-medium bg-[#007BFF]/5 hover:bg-[#007BFF]/10 text-[#007BFF] border border-[#007BFF]/10 transition-colors disabled:opacity-50"
+              >
+                <type.icon className="h-3 w-3" />
+                {type.label.split(' ').slice(0, 2).join(' ')}
+              </motion.button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Analysis Result Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="glass-card rounded-2xl max-w-lg max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-[#007BFF]" />
+              {analysisTitle}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto max-h-[60vh] pr-2 scrollbar-thin">
+            {isAnalyzing ? (
+              <div className="flex flex-col items-center justify-center py-8 gap-3">
+                <motion.div
+                  className="h-10 w-10 rounded-full bg-[#007BFF]/10 flex items-center justify-center"
+                  animate={{ scale: [1, 1.1, 1] }}
+                  transition={{ repeat: Infinity, duration: 1.5 }}
+                >
+                  <Brain className="h-5 w-5 text-[#007BFF]" />
+                </motion.div>
+                <p className="text-sm text-muted-foreground">Generando análisis...</p>
+                <div className="w-32">
+                  <Progress value={66} className="h-1.5" />
+                </div>
+              </div>
+            ) : analysisResult ? (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-sm leading-relaxed space-y-2"
+              >
+                {formatAIMessage(analysisResult).map((node, i) => (
+                  <React.Fragment key={i}>{node}</React.Fragment>
+                ))}
+              </motion.div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   )
 }
@@ -1450,6 +1925,7 @@ export default function ChequeoRutaChicaPage() {
             <div className="space-y-4">
               <UploadPanel />
               <QuickStats />
+              <AIAnalysisCard />
               <RecentScansPanel />
             </div>
 
@@ -1497,6 +1973,9 @@ export default function ChequeoRutaChicaPage() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* AI Chat Panel (floating) */}
+      <AIChatPanel />
     </div>
   )
 }
