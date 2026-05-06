@@ -24,13 +24,11 @@ export async function GET() {
     // If no active session, find or create one for today
     if (!session) {
       const today = getTodayDate()
-      // Check if a session for today already exists (may be closed)
       const existingSession = await db.session.findUnique({
         where: { date: today },
       })
 
       if (existingSession) {
-        // Reactivate the existing session for today
         session = await db.session.update({
           where: { id: existingSession.id },
           data: { status: 'active' },
@@ -41,7 +39,6 @@ export async function GET() {
           },
         })
       } else {
-        // Create a new session for today
         session = await db.session.create({
           data: {
             date: today,
@@ -84,7 +81,6 @@ export async function POST(request: NextRequest) {
     })
 
     if (existingSession) {
-      // Re-activate it
       const session = await db.session.update({
         where: { id: existingSession.id },
         data: { status: 'active' },
@@ -97,7 +93,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ session, reactivated: true })
     }
 
-    // Create new session
     const session = await db.session.create({
       data: {
         date,
@@ -115,6 +110,86 @@ export async function POST(request: NextRequest) {
     console.error('Error creating session:', error)
     return NextResponse.json(
       { error: 'Failed to create session' },
+      { status: 500 }
+    )
+  }
+}
+
+// DELETE: "Nueva Jornada" - Reset the session for a fresh start
+// This clears all data for the current session so the user can upload new files
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const sessionId = searchParams.get('sessionId')
+    const force = searchParams.get('force') === 'true'
+
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: 'sessionId is required' },
+        { status: 400 }
+      )
+    }
+
+    // Verify session exists
+    const session = await db.session.findUnique({
+      where: { id: sessionId },
+    })
+
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Session not found' },
+        { status: 404 }
+      )
+    }
+
+    // If session is active and has data, require force flag
+    if (session.status === 'active' && !force) {
+      const productCount = await db.product.count({
+        where: { sessionId },
+      })
+      const scanCount = await db.scanEvent.count({
+        where: { sessionId },
+      })
+      
+      if (productCount > 0 || scanCount > 0) {
+        return NextResponse.json({
+          error: 'Session has data. Use force=true to confirm reset.',
+          requiresConfirmation: true,
+          productCount,
+          scanCount,
+        }, { status: 409 })
+      }
+    }
+
+    // Delete all data for this session (cascade will handle relations)
+    // We delete the session and create a fresh one for today
+    await db.session.delete({
+      where: { id: sessionId },
+    })
+
+    // Create a new fresh session for today
+    const today = getTodayDate()
+    const newSession = await db.session.create({
+      data: {
+        date: today,
+        status: 'active',
+      },
+      include: {
+        _count: {
+          select: { products: true, assignments: true, scanEvents: true },
+        },
+      },
+    })
+
+    return NextResponse.json({
+      success: true,
+      message: 'Sesión reiniciada exitosamente. Puede cargar nuevos archivos.',
+      session: newSession,
+    })
+  } catch (error) {
+    console.error('Error resetting session:', error)
+    return NextResponse.json(
+      { error: 'Failed to reset session' },
       { status: 500 }
     )
   }

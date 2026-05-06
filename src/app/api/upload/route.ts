@@ -1,13 +1,10 @@
 import { db } from '@/lib/db'
 import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { writeFile, unlink } from 'fs/promises'
 import path from 'path'
 import os from 'os'
-
-const execFileAsync = promisify(execFile)
+import { processPdfBuffer } from '@/lib/ocr-engine'
 
 // POST: Upload Excel and/or PDF files
 export async function POST(request: NextRequest) {
@@ -41,6 +38,9 @@ export async function POST(request: NextRequest) {
       workersUpdated: number
       assignmentsCreated: number
       errors: string[]
+      ocrMethod?: string
+      ocrPages?: number
+      ocrConfidence?: number
     } = {
       productsCreated: 0,
       workersCreated: 0,
@@ -70,10 +70,9 @@ export async function POST(request: NextRequest) {
           })
 
           // Skip header row (row 0), process data rows
-          // Skip the last row if it's a total row
           let dataRows = rows.slice(1)
 
-          // Check if last row is a total row (contains "Total" or similar)
+          // Check if last row is a total row
           if (dataRows.length > 0) {
             const lastRow = dataRows[dataRows.length - 1]
             const lastRowStr = lastRow.join('').toLowerCase()
@@ -98,7 +97,6 @@ export async function POST(request: NextRequest) {
             if (isNaN(totalRequested)) continue
 
             try {
-              // Use upsert to handle duplicate codes within same session
               await db.product.upsert({
                 where: {
                   code_sessionId: { code, sessionId },
@@ -135,24 +133,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Process PDF file
+    // Process PDF file with OCR engine
     if (pdfFile) {
       try {
         const pdfBuffer = Buffer.from(await pdfFile.arrayBuffer())
         
-        // Use pdftotext CLI to extract text from PDF
-        const tmpPdf = path.join(os.tmpdir(), `upload_${Date.now()}.pdf`)
-        const tmpTxt = path.join(os.tmpdir(), `upload_${Date.now()}.txt`)
-        
-        await writeFile(tmpPdf, pdfBuffer)
-        
-        try {
-          await execFileAsync('pdftotext', [tmpPdf, tmpTxt])
-          const { readFile } = await import('fs/promises')
-          const text = await readFile(tmpTxt, 'utf-8')
-          
-          // Parse delivery notes from the PDF
+        // Use our OCR engine that handles both text and image PDFs
+        const ocrResult = await processPdfBuffer(pdfBuffer)
+        const text = ocrResult.text
+
+        results.ocrMethod = ocrResult.method
+        results.ocrPages = ocrResult.pagesProcessed
+        results.ocrConfidence = Math.round(ocrResult.confidence * 100)
+
+        console.log(`[Upload] PDF processed via ${ocrResult.method}, ${ocrResult.pagesProcessed} pages, confidence: ${Math.round(ocrResult.confidence * 100)}%`)
+
+        if (!text || text.trim().length === 0) {
+          results.errors.push('PDF: No se pudo extraer texto del archivo. El PDF puede estar vacío o protegido.')
+        } else {
+          // Parse delivery notes from the extracted text
           const notes = parseDeliveryNotes(text)
+
+          if (notes.length === 0) {
+            results.errors.push('PDF: No se encontraron notas de entrega válidas. Verifique que el formato del PDF sea correcto.')
+          }
 
           for (const note of notes) {
             if (!note.codigo) continue
@@ -166,7 +170,6 @@ export async function POST(request: NextRequest) {
               let workerId: string
 
               if (existingWorker) {
-                // Update worker info if needed
                 await db.worker.update({
                   where: { id: existingWorker.id },
                   data: {
@@ -211,7 +214,6 @@ export async function POST(request: NextRequest) {
                   continue
                 }
 
-                // Create assignment (use upsert for idempotency)
                 try {
                   await db.assignment.upsert({
                     where: {
@@ -247,10 +249,6 @@ export async function POST(request: NextRequest) {
               )
             }
           }
-        } finally {
-          // Clean up temp files
-          await unlink(tmpPdf).catch(() => {})
-          await unlink(tmpTxt).catch(() => {})
         }
       } catch (err) {
         results.errors.push(
@@ -361,14 +359,6 @@ function parseDeliveryNote(text: string): DeliveryNote | null {
   }
 
   // Extract product lines
-  // pdftotext without -layout puts qty, code, description on separate lines:
-  // Line 1: "1"        (quantity)
-  // Line 2: "20585"    (product code)  
-  // Line 3: "PREGALIS 150MG. X30CA"  (description)
-  // 
-  // But sometimes they're on the same line: "1 20585 PREGALIS 150MG. X30CA"
-  // We need to handle both formats.
-  
   for (let i = 0; i < lines.length; i++) {
     const trimmedLine = lines[i].trim()
     if (!trimmedLine) continue
@@ -389,12 +379,10 @@ function parseDeliveryNote(text: string): DeliveryNote | null {
     }
 
     // Format 2: Quantity on its own line, followed by code on next line, then description
-    // Line: "1" or "4" (just a number)
     const qtyMatch = trimmedLine.match(/^(\d{1,3})$/)
     if (qtyMatch) {
       const quantity = parseInt(qtyMatch[1], 10)
       if (quantity > 0 && quantity <= 100) {
-        // Look at next lines for product code and description
         const nextLines: string[] = []
         for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
           const nextLine = lines[j].trim()
@@ -426,14 +414,8 @@ function parseDeliveryNote(text: string): DeliveryNote | null {
 }
 
 function isValidProductCode(code: string): boolean {
-  // Product codes in this system follow patterns like:
-  // - 5-digit numbers: 10680, 20585, etc.
-  // - Letter+number combos: MN076, CH075, PD475, VO121, LT073, etc.
-  // - Short alphanumeric: CO540, ED119, etc.
   if (code.length < 3 || code.length > 10) return false
-  // Must contain at least one digit
   if (!/\d/.test(code)) return false
-  // Must not be a common non-code word
   const invalid = ['CODIGO', 'ITINERARIO', 'RUTA', 'ZONA', 'PAG', 'RIF', 'CANT', 'TOTAL', 'ORDEN', 'SERIE', 'FECHA']
   if (invalid.includes(code.toUpperCase())) return false
   return true

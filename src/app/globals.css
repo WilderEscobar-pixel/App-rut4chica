@@ -41,75 +41,95 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Electric Blue brand colors */
+  --color-electric: var(--electric);
+  --color-electric-light: var(--electric-light);
+  --color-electric-dark: var(--electric-dark);
+  --color-electric-glow: var(--electric-glow);
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --radius: 0.75rem;
+  
+  /* Electric Blue Brand Colors */
+  --electric: #007BFF;
+  --electric-light: #339DFF;
+  --electric-dark: #0056b3;
+  --electric-glow: rgba(0, 123, 255, 0.25);
+  
+  /* Light theme - clean white with Electric Blue accents */
+  --background: oklch(0.985 0.002 250);
+  --foreground: oklch(0.155 0.015 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.155 0.015 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.155 0.015 260);
+  --primary: oklch(0.55 0.2 255);        /* Electric Blue */
+  --primary-foreground: oklch(0.985 0 0); /* White text on blue */
+  --secondary: oklch(0.96 0.01 250);
+  --secondary-foreground: oklch(0.25 0.02 260);
+  --muted: oklch(0.96 0.008 250);
+  --muted-foreground: oklch(0.55 0.015 260);
+  --accent: oklch(0.95 0.02 250);
+  --accent-foreground: oklch(0.25 0.02 260);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --border: oklch(0.92 0.01 250);
+  --input: oklch(0.92 0.01 250);
+  --ring: oklch(0.55 0.2 255);             /* Electric Blue ring */
+  --chart-1: oklch(0.55 0.2 255);          /* Electric Blue */
+  --chart-2: oklch(0.6 0.15 160);          /* Emerald */
+  --chart-3: oklch(0.65 0.18 45);          /* Amber */
+  --chart-4: oklch(0.6 0.2 330);           /* Purple */
+  --chart-5: oklch(0.55 0.2 20);           /* Red */
+  --sidebar: oklch(0.985 0.002 250);
+  --sidebar-foreground: oklch(0.155 0.015 260);
+  --sidebar-primary: oklch(0.55 0.2 255);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-accent: oklch(0.95 0.02 250);
+  --sidebar-accent-foreground: oklch(0.25 0.02 260);
+  --sidebar-border: oklch(0.92 0.01 250);
+  --sidebar-ring: oklch(0.55 0.2 255);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  /* Dark theme - deep navy with Electric Blue accents */
+  --electric: #339DFF;
+  --electric-light: #66B2FF;
+  --electric-dark: #007BFF;
+  --electric-glow: rgba(51, 157, 255, 0.2);
+  
+  --background: oklch(0.13 0.02 260);
+  --foreground: oklch(0.96 0.005 250);
+  --card: oklch(0.18 0.02 260);
+  --card-foreground: oklch(0.96 0.005 250);
+  --popover: oklch(0.18 0.02 260);
+  --popover-foreground: oklch(0.96 0.005 250);
+  --primary: oklch(0.65 0.2 255);         /* Brighter Electric Blue for dark */
+  --primary-foreground: oklch(0.13 0.02 260);
+  --secondary: oklch(0.22 0.02 260);
+  --secondary-foreground: oklch(0.96 0.005 250);
+  --muted: oklch(0.22 0.015 260);
+  --muted-foreground: oklch(0.65 0.01 250);
+  --accent: oklch(0.22 0.02 260);
+  --accent-foreground: oklch(0.96 0.005 250);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
+  --ring: oklch(0.65 0.2 255);
+  --chart-1: oklch(0.65 0.2 255);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar: oklch(0.18 0.02 260);
+  --sidebar-foreground: oklch(0.96 0.005 250);
+  --sidebar-primary: oklch(0.65 0.2 255);
+  --sidebar-primary-foreground: oklch(0.13 0.02 260);
+  --sidebar-accent: oklch(0.22 0.02 260);
+  --sidebar-accent-foreground: oklch(0.96 0.005 250);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.65 0.2 255);
 }
 
 @layer base {
@@ -119,4 +139,116 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* ─── Glassmorphism Utilities ───────────────────────────────────────── */
+
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.dark .glass {
+  background: rgba(20, 30, 50, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 8px 32px rgba(0, 123, 255, 0.08);
+}
+
+.dark .glass-card {
+  background: rgba(18, 28, 48, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.glass-header {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border-bottom: 1px solid rgba(0, 123, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 123, 255, 0.06);
+}
+
+.dark .glass-header {
+  background: rgba(13, 20, 40, 0.8);
+  border-bottom: 1px solid rgba(51, 157, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* ─── Electric Blue Glow Effects ────────────────────────────────────── */
+
+.glow-electric {
+  box-shadow: 0 0 20px rgba(0, 123, 255, 0.3), 0 0 40px rgba(0, 123, 255, 0.1);
+}
+
+.dark .glow-electric {
+  box-shadow: 0 0 20px rgba(51, 157, 255, 0.25), 0 0 40px rgba(51, 157, 255, 0.08);
+}
+
+.glow-success {
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+}
+
+.glow-warning {
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
+}
+
+.glow-danger {
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
+}
+
+/* ─── Custom Scrollbar ──────────────────────────────────────────────── */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 123, 255, 0.2);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 123, 255, 0.4);
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(51, 157, 255, 0.2);
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(51, 157, 255, 0.4);
+}
+
+/* ─── Gradient Text ──────────────────────────────────────────────────── */
+
+.text-gradient-electric {
+  background: linear-gradient(135deg, #007BFF, #339DFF);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Animated Background Gradient ──────────────────────────────────── */
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 8s ease infinite;
 }

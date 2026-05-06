@@ -104,6 +104,9 @@ export interface UploadResult {
     workersUpdated: number
     assignmentsCreated: number
     errors: string[]
+    ocrMethod?: string
+    ocrPages?: number
+    ocrConfidence?: number
   }
 }
 
@@ -172,6 +175,12 @@ interface AppState {
   isUploading: boolean
   isScanning: boolean
   isFinalizing: boolean
+  isResetting: boolean
+
+  // OCR processing state
+  ocrMethod: string | null
+  ocrPages: number | null
+  ocrConfidence: number | null
 
   // Scanner state
   isScannerListening: boolean
@@ -189,6 +198,7 @@ interface AppState {
   finalizeSession: () => Promise<boolean>
   fetchReport: () => Promise<ReportData | null>
   fetchRecentScans: () => Promise<void>
+  resetSession: (force?: boolean) => Promise<boolean>
   setScannerListening: (listening: boolean) => void
   initSocket: () => void
   disconnectSocket: () => void
@@ -209,6 +219,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   isUploading: false,
   isScanning: false,
   isFinalizing: false,
+  isResetting: false,
+  ocrMethod: null,
+  ocrPages: null,
+  ocrConfidence: null,
   isScannerListening: false,
   isSocketConnected: false,
   socket: null,
@@ -286,7 +300,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { session } = get()
     if (!session) return null
 
-    set({ isUploading: true })
+    set({ isUploading: true, ocrMethod: null, ocrPages: null, ocrConfidence: null })
     try {
       const formData = new FormData()
       formData.append('excel', excel)
@@ -300,6 +314,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       const data = await res.json()
 
       if (data.success) {
+        // Store OCR metadata
+        if (data.results?.ocrMethod) {
+          set({
+            ocrMethod: data.results.ocrMethod,
+            ocrPages: data.results.ocrPages ?? null,
+            ocrConfidence: data.results.ocrConfidence ?? null,
+          })
+        }
         // Refresh products after upload
         await get().fetchProducts()
         return data as UploadResult
@@ -382,13 +404,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const data = await res.json()
 
       if (data.success) {
-        // Update session status locally
         set({
           session: { ...session, status: 'closed' },
         })
-        // Refresh products to show missing status
         await get().fetchProducts()
-        // Fetch report
         await get().fetchReport()
         return true
       }
@@ -398,6 +417,53 @@ export const useAppStore = create<AppState>((set, get) => ({
       return false
     } finally {
       set({ isFinalizing: false })
+    }
+  },
+
+  // ─── Reset Session (Nueva Jornada) ────────────────────────────────
+
+  resetSession: async (force = false) => {
+    const { session } = get()
+    if (!session) return false
+
+    set({ isResetting: true })
+    try {
+      const params = new URLSearchParams({ sessionId: session.id })
+      if (force) params.set('force', 'true')
+
+      const res = await fetch(`/api/session?${params.toString()}`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        // Reset all local state
+        set({
+          session: data.session,
+          products: [],
+          productSummary: null,
+          scanEvents: [],
+          lastScan: null,
+          report: null,
+          assignmentsMap: {},
+          ocrMethod: null,
+          ocrPages: null,
+          ocrConfidence: null,
+        })
+        return true
+      }
+      
+      // Handle requiresConfirmation case
+      if (data.requiresConfirmation) {
+        return data.requiresConfirmation as unknown as boolean
+      }
+      
+      return false
+    } catch (error) {
+      console.error('Error resetting session:', error)
+      return false
+    } finally {
+      set({ isResetting: false })
     }
   },
 
@@ -454,7 +520,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     socket.on('scan:event', (data: ScanEventData & { timestamp: string }) => {
       console.log('[WS] Scan event:', data)
-      // Add to recent scan events
       set((state) => ({
         scanEvents: [
           {
@@ -474,7 +539,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     socket.on('product:updated', () => {
       console.log('[WS] Product updated, refreshing...')
-      // Refresh products list
       get().fetchProducts()
     })
 
