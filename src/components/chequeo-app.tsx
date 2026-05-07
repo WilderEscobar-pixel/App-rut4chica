@@ -624,8 +624,8 @@ function UploadPanel() {
   const session = useAppStore((s) => s.session)
   const ocrMethod = useAppStore((s) => s.ocrMethod)
   const ocrConfidence = useAppStore((s) => s.ocrConfidence)
-  const [excelFile, setExcelFile] = useState<File | null>(null)
-  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [excelFiles, setExcelFiles] = useState<File[]>([])
+  const [pdfFiles, setPdfFiles] = useState<File[]>([])
   const [uploadResult, setUploadResult] = useState<{
     productsCreated: number
     workersCreated: number
@@ -641,11 +641,11 @@ function UploadPanel() {
   const pdfInputRef = useRef<HTMLInputElement>(null)
 
   const handleUpload = async () => {
-    if (!excelFile || !pdfFile) {
-      toast.error('Debe seleccionar ambos archivos')
+    if (excelFiles.length === 0 || pdfFiles.length === 0) {
+      toast.error('Debe seleccionar al menos un archivo Excel y un PDF')
       return
     }
-    const result = await uploadFiles(excelFile, pdfFile)
+    const result = await uploadFiles(excelFiles, pdfFiles)
     if (result?.results) {
       setUploadResult(result.results)
       if (result.results.errors.length === 0) {
@@ -676,21 +676,23 @@ function UploadPanel() {
     if (type === 'excel') setIsDraggingExcel(false)
     else setIsDraggingPdf(false)
 
-    const file = e.dataTransfer.files[0]
-    if (!file) return
+    const droppedFiles = Array.from(e.dataTransfer.files)
+    if (droppedFiles.length === 0) return
 
     if (type === 'excel') {
-      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-        setExcelFile(file)
-      } else {
-        toast.error('El archivo Excel debe ser .xlsx o .xls')
+      const validFiles = droppedFiles.filter(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'))
+      if (validFiles.length === 0) {
+        toast.error('Los archivos Excel deben ser .xlsx o .xls')
+        return
       }
+      setExcelFiles(prev => [...prev, ...validFiles].slice(0, 2))
     } else {
-      if (file.name.endsWith('.pdf')) {
-        setPdfFile(file)
-      } else {
-        toast.error('El archivo PDF debe ser .pdf')
+      const validFiles = droppedFiles.filter(f => f.name.endsWith('.pdf'))
+      if (validFiles.length === 0) {
+        toast.error('Los archivos PDF deben ser .pdf')
+        return
       }
+      setPdfFiles(prev => [...prev, ...validFiles].slice(0, 2))
     }
   }
 
@@ -709,18 +711,16 @@ function UploadPanel() {
             Cargar Datos del Día
           </CardTitle>
           <CardDescription className="text-xs">
-            Suba el archivo Excel con los productos y el PDF con las asignaciones. El PDF se procesa con OCR automáticamente.
+            Suba hasta 2 archivos Excel con los productos y hasta 2 PDF con las asignaciones. Los PDF se procesan con OCR automáticamente.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {/* Excel Input */}
-          <motion.div
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.99 }}
+          <div
             className={`relative border-2 border-dashed rounded-xl p-4 text-center transition-all cursor-pointer ${
               isDraggingExcel 
                 ? 'border-[#007BFF] bg-[#007BFF]/5 dark:bg-[#007BFF]/10' 
-                : excelFile 
+                : excelFiles.length > 0
                   ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/10'
                   : 'border-muted-foreground/20 hover:border-[#007BFF]/50 hover:bg-[#007BFF]/5'
             }`}
@@ -733,28 +733,50 @@ function UploadPanel() {
               ref={excelInputRef}
               type="file"
               accept=".xlsx,.xls"
+              multiple
               className="hidden"
-              onChange={(e) => setExcelFile(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                const files = e.target.files ? Array.from(e.target.files) : []
+                const validFiles = files.filter(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'))
+                setExcelFiles(prev => [...prev, ...validFiles].slice(0, 2))
+                // Reset input so same file can be re-selected
+                e.target.value = ''
+              }}
             />
             <FileSpreadsheet className="h-6 w-6 mx-auto mb-1.5 text-emerald-500" />
-            <p className="text-xs font-medium">
-              {excelFile ? excelFile.name : 'Archivo Excel (.xlsx)'}
-            </p>
-            {excelFile && (
+            {excelFiles.length > 0 ? (
+              <div className="space-y-1">
+                {excelFiles.map((f, i) => (
+                  <div key={`${f.name}-${i}`} className="flex items-center justify-center gap-1.5">
+                    <span className="text-xs font-medium truncate max-w-[180px]">{f.name}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExcelFiles(prev => prev.filter((_, idx) => idx !== i)) }}
+                      className="text-muted-foreground hover:text-red-500 transition-colors"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {excelFiles.length < 2 && (
+                  <p className="text-[10px] text-muted-foreground">+ Agregar otro Excel</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs font-medium">Archivos Excel (.xlsx) — máx. 2</p>
+            )}
+            {excelFiles.length > 0 && (
               <Badge variant="secondary" className="mt-1.5 text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-                ✓ Seleccionado
+                ✓ {excelFiles.length} archivo{excelFiles.length > 1 ? 's' : ''}
               </Badge>
             )}
-          </motion.div>
+          </div>
 
           {/* PDF Input */}
-          <motion.div
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.99 }}
+          <div
             className={`relative border-2 border-dashed rounded-xl p-4 text-center transition-all cursor-pointer ${
               isDraggingPdf 
                 ? 'border-[#007BFF] bg-[#007BFF]/5 dark:bg-[#007BFF]/10' 
-                : pdfFile 
+                : pdfFiles.length > 0
                   ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/10'
                   : 'border-muted-foreground/20 hover:border-[#007BFF]/50 hover:bg-[#007BFF]/5'
             }`}
@@ -767,28 +789,52 @@ function UploadPanel() {
               ref={pdfInputRef}
               type="file"
               accept=".pdf"
+              multiple
               className="hidden"
-              onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                const files = e.target.files ? Array.from(e.target.files) : []
+                const validFiles = files.filter(f => f.name.endsWith('.pdf'))
+                setPdfFiles(prev => [...prev, ...validFiles].slice(0, 2))
+                // Reset input so same file can be re-selected
+                e.target.value = ''
+              }}
             />
             <div className="flex items-center justify-center gap-1.5 mb-1.5">
               <FileText className="h-6 w-6 text-red-500" />
               <Eye className="h-3.5 w-3.5 text-[#007BFF]" />
             </div>
-            <p className="text-xs font-medium">
-              {pdfFile ? pdfFile.name : 'Archivo PDF (OCR automático)'}
-            </p>
-            {pdfFile && (
+            {pdfFiles.length > 0 ? (
+              <div className="space-y-1">
+                {pdfFiles.map((f, i) => (
+                  <div key={`${f.name}-${i}`} className="flex items-center justify-center gap-1.5">
+                    <span className="text-xs font-medium truncate max-w-[180px]">{f.name}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPdfFiles(prev => prev.filter((_, idx) => idx !== i)) }}
+                      className="text-muted-foreground hover:text-red-500 transition-colors"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {pdfFiles.length < 2 && (
+                  <p className="text-[10px] text-muted-foreground">+ Agregar otro PDF</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs font-medium">Archivos PDF (OCR automático) — máx. 2</p>
+            )}
+            {pdfFiles.length > 0 && (
               <Badge variant="secondary" className="mt-1.5 text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-                ✓ Seleccionado
+                ✓ {pdfFiles.length} archivo{pdfFiles.length > 1 ? 's' : ''}
               </Badge>
             )}
-          </motion.div>
+          </div>
 
           {/* Upload Button */}
           <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
             <Button
               onClick={handleUpload}
-              disabled={isUploading || !excelFile || !pdfFile}
+              disabled={isUploading || excelFiles.length === 0 || pdfFiles.length === 0}
               className="w-full bg-gradient-to-r from-[#007BFF] to-[#339DFF] hover:from-[#0056b3] hover:to-[#007BFF] text-white rounded-xl shadow-lg shadow-[#007BFF]/20 h-10"
             >
               {isUploading ? (
@@ -1478,9 +1524,11 @@ function ProductRow({ product }: { product: ProductData }) {
         } else if (result.status === 'already_complete') {
           toast.warning(`Producto ${product.code} ya está completo`)
           playAlertSound()
-        } else {
-          toast.error(`Error: ${result.message}`)
+        } else if (result.status === 'not_found') {
+          toast.warning(`Producto ${product.code} no encontrado en la lista`)
           playAlertSound()
+        } else {
+          toast.info(result.message || `Producto ${product.code} procesado`)
         }
         setShowManualDialog(false)
         setManualQty(1)
@@ -1531,6 +1579,20 @@ function ProductRow({ product }: { product: ProductData }) {
               {product.origen && product.origen !== 'R' && (
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 rounded-md">
                   {product.origen}
+                </Badge>
+              )}
+              {product._count?.assignments != null && (
+                <Badge
+                  variant={product._count.assignments > 0 ? 'secondary' : 'outline'}
+                  className={`text-[10px] px-1.5 py-0 rounded-md ${
+                    product._count.assignments > 0
+                      ? 'bg-[#007BFF]/10 text-[#007BFF] border-[#007BFF]/20'
+                      : 'text-amber-500 border-amber-300/50'
+                  }`}
+                >
+                  {product._count.assignments > 0
+                    ? `${product._count.assignments} asig.`
+                    : 'Sin asig.'}
                 </Badge>
               )}
             </div>
@@ -1603,7 +1665,7 @@ function ProductRow({ product }: { product: ProductData }) {
                   </div>
                 ))
               ) : (
-                <p className="text-xs text-muted-foreground italic px-3">Sin asignaciones</p>
+                <p className="text-xs text-muted-foreground italic px-3 py-1.5">Sin asignación específica — producto general (no asociado a un trabajador en particular)</p>
               )
             ) : (
               <div className="flex items-center gap-2 px-3 py-2">

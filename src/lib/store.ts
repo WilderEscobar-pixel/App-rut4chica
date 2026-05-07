@@ -214,7 +214,7 @@ interface AppState {
   fetchSession: () => Promise<void>
   fetchProducts: (filters?: { status?: string; search?: string }) => Promise<void>
   fetchAssignments: (productCode: string) => Promise<void>
-  uploadFiles: (excel: File, pdf: File) => Promise<UploadResult | null>
+  uploadFiles: (excelFiles: File | File[], pdfFiles: File | File[]) => Promise<UploadResult | null>
   scanBarcode: (barcode: string, quantity?: number) => Promise<ScanResult | null>
   manualScan: (productCode: string, quantity: number) => Promise<ScanResult | null>
   finalizeSession: () => Promise<boolean>
@@ -326,22 +326,42 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ─── Upload ──────────────────────────────────────────────────────
 
-  uploadFiles: async (excel: File, pdf: File) => {
+  uploadFiles: async (excelFiles: File | File[], pdfFiles: File | File[]) => {
     const { session } = get()
     if (!session) return null
 
     set({ isUploading: true, ocrMethod: null, ocrPages: null, ocrConfidence: null })
     try {
       const formData = new FormData()
-      formData.append('excel', excel)
-      formData.append('pdf', pdf)
+
+      // Normalize to arrays
+      const excels = Array.isArray(excelFiles) ? excelFiles : [excelFiles]
+      const pdfs = Array.isArray(pdfFiles) ? pdfFiles : [pdfFiles]
+
+      // Append Excel files
+      for (let i = 0; i < excels.length; i++) {
+        formData.append(i === 0 ? 'excel' : `excel_${i}`, excels[i])
+      }
+
+      // Append PDF files
+      for (let i = 0; i < pdfs.length; i++) {
+        formData.append(i === 0 ? 'pdf' : `pdf_${i}`, pdfs[i])
+      }
+
       formData.append('sessionId', session.id)
 
       const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
       })
-      const data = await res.json()
+
+      // Safely parse JSON - handle non-JSON responses gracefully
+      let data: UploadResult
+      try {
+        data = await res.json()
+      } catch {
+        return { success: false, results: { productsCreated: 0, workersCreated: 0, workersUpdated: 0, assignmentsCreated: 0, errors: ['Error del servidor - respuesta inválida'] } } as UploadResult
+      }
 
       if (data.success) {
         // Store OCR metadata
@@ -381,7 +401,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const data = await res.json()
+
+      // Safely parse JSON - handle non-JSON responses gracefully
+      let data: ScanResult & { error?: string }
+      try {
+        data = await res.json()
+      } catch {
+        return { status: 'not_found', message: 'Error del servidor - respuesta inválida', barcode } as ScanResult
+      }
 
       // Handle HTTP error responses
       if (!res.ok) {
@@ -422,7 +449,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify({ barcode: productCode, sessionId: session.id, quantity }),
       })
 
-      const data = await res.json()
+      // Safely parse JSON - handle non-JSON responses gracefully
+      let data: ScanResult & { error?: string }
+      try {
+        data = await res.json()
+      } catch {
+        await get().fetchProducts()
+        await get().fetchRecentScans()
+        return { status: 'not_found', message: 'Error del servidor - respuesta inválida' } as ScanResult
+      }
 
       // Handle HTTP error responses
       if (!res.ok) {

@@ -91,3 +91,61 @@ Stage Summary:
 - Product code matching more flexible (case-insensitive, leading zeros)
 - Save/Resume feature fully implemented
 - WiFi scanner instructions added to help dialog
+
+---
+Task ID: 2
+Agent: full-stack-developer
+Task: Update UploadPanel for multi-file support, fix hydration error, fix toast error
+
+Work Log:
+- Updated UploadPanel to support up to 2 Excel and 2 PDF files
+  - Changed `excelFile` state from `File | null` to `File[]` (empty array)
+  - Changed `pdfFile` state from `File | null` to `File[]` (empty array)
+  - Added `multiple` attribute on both file inputs
+  - Updated drag-and-drop to handle multiple files with validation
+  - Added individual file remove buttons (XCircle) per file
+  - Shows "+ Agregar otro Excel/PDF" hint when < 2 files selected
+  - Badge shows count of selected files
+  - Upload button enabled when at least 1 Excel AND 1 PDF selected
+  - handleUpload passes arrays to store's uploadFiles
+  - Updated CardDescription text to indicate "hasta 2 archivos"
+- Verified HTML hydration error is already fixed (no <div> inside any AlertDialogDescription)
+  - All 6 AlertDialogDescription instances checked — all contain only inline elements (text or <span>)
+  - The <div> at line 1680 is a sibling of AlertDialogHeader, not inside AlertDialogDescription
+- Fixed toast error on manual scanning
+  - Added explicit `not_found` status handling with `toast.warning` instead of generic `toast.error`
+  - Changed generic else branch from `toast.error` to `toast.info` for non-error unexpected statuses
+  - Only `not_found` plays alert sound; other unexpected statuses don't (informational only)
+- Ran `bun run lint` — no errors
+- Dev server compiling successfully
+
+Stage Summary:
+- UploadPanel now supports multi-file upload (max 2 Excel + 2 PDF) with add/remove UI
+- HTML hydration error already resolved from previous tasks — verified no regression
+- Manual scan toast properly differentiates not_found (warning) vs other statuses (info) instead of showing error
+
+---
+Task ID: 15
+Agent: Main Agent
+Task: Fix "Unexpected token 'S'" JSON parse error, add multi-file upload support, fix "sin asignaciones" bug
+
+Work Log:
+- Identified root cause of "Unexpected token 'S', 'Server act'... is not valid JSON": /api/upload route was MISSING entirely
+- Created /api/upload route with full Excel parsing (xlsx), PDF OCR processing, worker extraction, and assignment creation
+- Upload route supports multiple Excel and PDF files (excel, excel_1, pdf, pdf_1, etc.)
+- PDF parser implements 3 strategies: block-based CODIGO: parsing, page-by-page parsing, aggressive fallback
+- Added safe JSON parsing in store's scanBarcode, manualScan, and uploadFiles to prevent future JSON parse errors
+- Updated store uploadFiles to accept File | File[] for both parameters
+- Updated products API to include _count.assignments for showing assignment counts
+- Added assignment count badge to ProductRow (e.g., "3 asig." or "Sin asig.")
+- Improved "Sin asignaciones" message to be more descriptive
+- Fixed toast error on manual scan: not_found → warning, other unexpected → info (not error)
+- UploadPanel updated to support 2 Excel + 2 PDF files with add/remove UI
+- All lint checks pass, dev server compiles cleanly
+
+Stage Summary:
+- CRITICAL FIX: /api/upload route created - this was the root cause of the JSON parse error
+- Multi-file upload (2 Excel + 2 PDF) now supported in both UI and backend
+- "Sin asignaciones" display improved with assignment count badge and better description
+- Toast errors on manual scan now properly categorized (warning/info instead of error)
+- Safe JSON parsing added to prevent future "Unexpected token" errors

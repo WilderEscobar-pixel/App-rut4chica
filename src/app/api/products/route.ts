@@ -24,6 +24,11 @@ export async function GET(request: NextRequest) {
     const products = await db.product.findMany({
       where,
       orderBy: { code: 'asc' },
+      include: {
+        _count: {
+          select: { assignments: true },
+        },
+      },
     })
 
     // Compute summary stats
