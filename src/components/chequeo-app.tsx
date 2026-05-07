@@ -10,7 +10,7 @@ import {
   FileSpreadsheet, FileText, Loader2, Scan, CircleDot,
   RotateCcw, Zap, Eye, Sparkles, Volume2, VolumeX,
   MessageSquare, Send, Bot, User, ChevronRight, Brain,
-  PlusCircle, Minus, Plus, Hash
+  PlusCircle, Minus, Plus, Hash, Save, PlayCircle
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
@@ -154,12 +154,19 @@ function AppHeader() {
   const productSummary = useAppStore((s) => s.productSummary)
   const { theme, setTheme } = useTheme()
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [showResetDialog, setShowResetDialog] = useState(false)
+  const [showResumeDialog, setShowResumeDialog] = useState(false)
   const [audioEnabled, setAudioEnabled] = useState(true)
   const isFinalizing = useAppStore((s) => s.isFinalizing)
   const isResetting = useAppStore((s) => s.isResetting)
+  const isSaving = useAppStore((s) => s.isSaving)
+  const isResuming = useAppStore((s) => s.isResuming)
   const finalizeSession = useAppStore((s) => s.finalizeSession)
   const resetSession = useAppStore((s) => s.resetSession)
+  const saveSession = useAppStore((s) => s.saveSession)
+  const resumeSession = useAppStore((s) => s.resumeSession)
+  const savedSessions = useAppStore((s) => s.savedSessions)
 
   const totalProgress = useMemo(() => {
     if (!productSummary || productSummary.total === 0) return 0
@@ -178,6 +185,26 @@ function AppHeader() {
       setShowFinalizeDialog(false)
     } else {
       toast.error('Error al finalizar la sesión')
+    }
+  }
+
+  const handleSave = async () => {
+    const success = await saveSession()
+    if (success) {
+      toast.success('Sesión guardada. Puede reanudarla cuando desee.')
+      setShowSaveDialog(false)
+    } else {
+      toast.error('Error al guardar la sesión')
+    }
+  }
+
+  const handleResume = async (sessionId: string) => {
+    const success = await resumeSession(sessionId)
+    if (success) {
+      toast.success('¡Jornada reanudada! Continúe escaneando los productos pendientes.')
+      setShowResumeDialog(false)
+    } else {
+      toast.error('Error al reanudar la sesión')
     }
   }
 
@@ -213,13 +240,18 @@ function AppHeader() {
             {session && (
               <div className="flex items-center gap-3">
                 <Badge 
-                  variant={session.status === 'active' ? 'default' : 'destructive'} 
+                  variant={session.status === 'active' ? 'default' : session.status === 'saved' ? 'secondary' : 'destructive'} 
                   className="text-xs font-medium"
                 >
                   {session.status === 'active' ? (
                     <span className="flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       Activa
+                    </span>
+                  ) : session.status === 'saved' ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                      Guardada
                     </span>
                   ) : 'Cerrada'}
                 </Badge>
@@ -311,6 +343,28 @@ function AppHeader() {
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Ejemplo: Si escaneas 1 "Flips Dulce de Leche" pero sabes que hay 12, haz clic en el botón <strong>+</strong> del producto y ajusta la cantidad a 12.
+                    </p>
+                  </div>
+
+                  <Separator />
+
+                  {/* WiFi Scanner Info */}
+                  <div className="space-y-2">
+                    <h4 className="font-semibold flex items-center gap-1.5">
+                      <Zap className="h-4 w-4 text-[#007BFF]" />
+                      Escáner WiFi / Inalámbrico
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                      Los escáneres WiFi funcionan igual que los USB/Bluetooth — envían caracteres de teclado. Para conectar:
+                    </p>
+                    <ol className="text-xs text-muted-foreground space-y-1 ml-4 list-decimal">
+                      <li>Configure el escáner en modo <strong>SSP (Serial Socket Profile)</strong> o <strong>Virtual COM</strong></li>
+                      <li>Conecte el escáner a la misma red WiFi que su computadora</li>
+                      <li>Instale el software del fabricante que convierte las lecturas en entrada de teclado</li>
+                      <li>El escáner enviará los códigos como si fueran tecleados — la app los detecta automáticamente</li>
+                    </ol>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      <strong>Alternativa:</strong> Si el escáner WiFi envía datos a una IP/puerto, puede usar un puente de software (como <em>Serial to Keyboard</em>) para redirigir las lecturas como entrada de teclado.
                     </p>
                   </div>
 
@@ -417,38 +471,141 @@ function AppHeader() {
               </AlertDialog>
             )}
 
-            {/* Finalize */}
+            {/* Finalize / Save buttons */}
             {session?.status === 'active' && products.length > 0 && (
-              <AlertDialog open={showFinalizeDialog} onOpenChange={setShowFinalizeDialog}>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" size="sm" className="gap-1.5 rounded-xl">
-                    <Lock className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Finalizar</span>
-                  </Button>
-                </AlertDialogTrigger>
+              <>
+                {/* Guardar (Save) */}
+                <AlertDialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="outline" size="sm" className="gap-1.5 rounded-xl border-amber-500/50 hover:bg-amber-500/10 text-amber-600">
+                            <Save className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">Guardar</span>
+                          </Button>
+                        </AlertDialogTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>Guardar progreso sin marcar faltantes</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <AlertDialogContent className="glass-card rounded-2xl">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="flex items-center gap-2">
+                        <Save className="h-5 w-5 text-amber-500" />
+                        ¿Guardar sesión?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Esta acción guardará el progreso actual sin marcar productos como faltantes.
+                        Podrá reanudar la sesión más tarde para continuar escaneando los productos pendientes.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="rounded-xl">Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className="bg-amber-500 hover:bg-amber-600 rounded-xl"
+                      >
+                        {isSaving ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Guardando...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4 mr-2" />
+                            Guardar Sesión
+                          </>
+                        )}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                {/* Finalizar */}
+                <AlertDialog open={showFinalizeDialog} onOpenChange={setShowFinalizeDialog}>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" size="sm" className="gap-1.5 rounded-xl">
+                      <Lock className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Finalizar</span>
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent className="glass-card rounded-2xl">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Finalizar sesión de escaneo?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Esta acción cerrará la sesión y marcará todos los productos pendientes o parciales como &quot;Faltante&quot;. Esta acción no se puede deshacer.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="rounded-xl">Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleFinalize}
+                        disabled={isFinalizing}
+                        className="bg-red-600 hover:bg-red-700 rounded-xl"
+                      >
+                        {isFinalizing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Finalizando...
+                          </>
+                        ) : (
+                          'Finalizar Sesión'
+                        )}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
+            )}
+
+            {/* Reanudar Jornada - appears when there are saved sessions */}
+            {savedSessions.length > 0 && session?.status !== 'active' && (
+              <AlertDialog open={showResumeDialog} onOpenChange={setShowResumeDialog}>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1.5 rounded-xl border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-600">
+                          <PlayCircle className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Reanudar Jornada</span>
+                        </Button>
+                      </AlertDialogTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>Reanudar una jornada guardada anteriormente</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <AlertDialogContent className="glass-card rounded-2xl">
                   <AlertDialogHeader>
-                    <AlertDialogTitle>¿Finalizar sesión de escaneo?</AlertDialogTitle>
+                    <AlertDialogTitle className="flex items-center gap-2">
+                      <PlayCircle className="h-5 w-5 text-emerald-500" />
+                      Reanudar Jornada Guardada
+                    </AlertDialogTitle>
                     <AlertDialogDescription>
-                      Esta acción cerrará la sesión y marcará todos los productos pendientes o parciales como &quot;Faltante&quot;. Esta acción no se puede deshacer.
+                      Seleccione la jornada guardada que desea reanudar para continuar escaneando:
                     </AlertDialogDescription>
                   </AlertDialogHeader>
+                  <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar my-2">
+                    {savedSessions.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => handleResume(s.id)}
+                        disabled={isResuming}
+                        className="w-full flex items-center justify-between p-3 rounded-xl border border-border/50 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 transition-colors text-left"
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{formatDate(s.date)}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {s._count?.products || 0} productos • {s._count?.scanEvents || 0} escaneos
+                          </p>
+                        </div>
+                        <PlayCircle className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+                      </button>
+                    ))}
+                  </div>
                   <AlertDialogFooter>
                     <AlertDialogCancel className="rounded-xl">Cancelar</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={handleFinalize}
-                      disabled={isFinalizing}
-                      className="bg-red-600 hover:bg-red-700 rounded-xl"
-                    >
-                      {isFinalizing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          Finalizando...
-                        </>
-                      ) : (
-                        'Finalizar Sesión'
-                      )}
-                    </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
@@ -537,7 +694,7 @@ function UploadPanel() {
     }
   }
 
-  if (session?.status === 'closed') {
+  if (session?.status === 'closed' || session?.status === 'saved') {
     return null
   }
 
@@ -1473,18 +1630,18 @@ function ProductRow({ product }: { product: ProductData }) {
               <span className="text-muted-foreground"> — </span>
               <span className="text-foreground">{product.description}</span>
             </AlertDialogDescription>
-            <div className="flex items-center gap-3 text-xs mt-2 px-1">
-              <span className="text-muted-foreground">
-                Escaneado: <span className="font-semibold text-foreground">{product.totalScanned}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Solicitado: <span className="font-semibold text-foreground">{product.totalRequested}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Falta: <span className="font-semibold text-amber-600">{remaining}</span>
-              </span>
-            </div>
           </AlertDialogHeader>
+          <div className="flex items-center gap-3 text-xs px-1">
+            <span className="text-muted-foreground">
+              Escaneado: <span className="font-semibold text-foreground">{product.totalScanned}</span>
+            </span>
+            <span className="text-muted-foreground">
+              Solicitado: <span className="font-semibold text-foreground">{product.totalRequested}</span>
+            </span>
+            <span className="text-muted-foreground">
+              Falta: <span className="font-semibold text-amber-600">{remaining}</span>
+            </span>
+          </div>
 
           {/* Quantity Selector */}
           <div className="py-4">
@@ -2104,6 +2261,142 @@ function ReportView() {
   )
 }
 
+// ─── Saved Session View ─────────────────────────────────────────────
+
+function SavedSessionView() {
+  const session = useAppStore((s) => s.session)
+  const products = useAppStore((s) => s.products)
+  const productSummary = useAppStore((s) => s.productSummary)
+  const resumeSession = useAppStore((s) => s.resumeSession)
+  const finalizeSession = useAppStore((s) => s.finalizeSession)
+  const isResuming = useAppStore((s) => s.isResuming)
+  const isFinalizing = useAppStore((s) => s.isFinalizing)
+  const [showFinalizeDialog, setShowFinalizeDialog] = useState(false)
+
+  const handleResume = async () => {
+    if (!session) return
+    const success = await resumeSession(session.id)
+    if (success) {
+      toast.success('¡Jornada reanudada! Continúe escaneando los productos pendientes.')
+    } else {
+      toast.error('Error al reanudar la sesión')
+    }
+  }
+
+  const handleFinalize = async () => {
+    const success = await finalizeSession()
+    if (success) {
+      toast.success('Sesión finalizada exitosamente')
+      setShowFinalizeDialog(false)
+    } else {
+      toast.error('Error al finalizar la sesión')
+    }
+  }
+
+  const pendingCount = productSummary ? productSummary.pending + productSummary.partial : 0
+
+  return (
+    <motion.div {...fadeInUp} className="max-w-lg mx-auto mt-8">
+      <Card className="glass-card rounded-2xl overflow-hidden">
+        <CardHeader className="text-center pb-4">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: 'spring', stiffness: 260, damping: 20 }}
+            className="mx-auto h-16 w-16 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center mb-4 shadow-lg shadow-amber-500/25"
+          >
+            <Save className="h-8 w-8 text-white" />
+          </motion.div>
+          <CardTitle className="text-xl">Jornada Guardada</CardTitle>
+          <CardDescription className="text-sm">
+            Esta jornada tiene <span className="font-semibold text-amber-600">{pendingCount}</span> producto{pendingCount !== 1 ? 's' : ''} pendiente{pendingCount !== 1 ? 's' : ''} o parcial{pendingCount !== 1 ? 'es' : ''}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Summary stats */}
+          {productSummary && (
+            <div className="grid grid-cols-3 gap-2 text-center text-sm">
+              <div className="p-3 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/20">
+                <p className="text-2xl font-bold text-emerald-600">{productSummary.complete}</p>
+                <p className="text-xs text-muted-foreground">Completos</p>
+              </div>
+              <div className="p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/20">
+                <p className="text-2xl font-bold text-amber-600">{pendingCount}</p>
+                <p className="text-xs text-muted-foreground">Pendientes</p>
+              </div>
+              <div className="p-3 rounded-xl bg-red-50/80 dark:bg-red-950/20">
+                <p className="text-2xl font-bold text-red-600">{productSummary.missing}</p>
+                <p className="text-xs text-muted-foreground">Faltantes</p>
+              </div>
+            </div>
+          )}
+
+          <Separator />
+
+          <p className="text-xs text-muted-foreground text-center">
+            Al reanudar, podrá escanear solo los productos pendientes sin perder el progreso ya realizado.
+          </p>
+
+          {/* Action buttons */}
+          <div className="space-y-2">
+            <Button
+              onClick={handleResume}
+              disabled={isResuming}
+              className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white rounded-xl h-11 shadow-md shadow-emerald-500/20"
+            >
+              {isResuming ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Reanudando...
+                </>
+              ) : (
+                <>
+                  <PlayCircle className="h-4 w-4 mr-2" />
+                  Reanudar Jornada
+                </>
+              )}
+            </Button>
+
+            <AlertDialog open={showFinalizeDialog} onOpenChange={setShowFinalizeDialog}>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" className="w-full rounded-xl h-11 border-red-200 hover:bg-red-50 hover:border-red-300 text-red-600 dark:border-red-800/50 dark:hover:bg-red-950/20">
+                  <Lock className="h-4 w-4 mr-2" />
+                  Finalizar y Marcar Faltantes
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className="glass-card rounded-2xl">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Finalizar sesión?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se marcarán {pendingCount} producto{pendingCount !== 1 ? 's' : ''} pendiente{pendingCount !== 1 ? 's' : ''}/parcial{pendingCount !== 1 ? 'es' : ''} como &quot;Faltante&quot;. Esta acción no se puede deshacer.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel className="rounded-xl">Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleFinalize}
+                    disabled={isFinalizing}
+                    className="bg-red-600 hover:bg-red-700 rounded-xl"
+                  >
+                    {isFinalizing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Finalizando...
+                      </>
+                    ) : (
+                      'Finalizar Sesión'
+                    )}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  )
+}
+
 // ─── Main Page Component ─────────────────────────────────────────────
 
 export function ChequeoRutaChicaApp() {
@@ -2182,6 +2475,7 @@ export function ChequeoRutaChicaApp() {
   }, [])
 
   const isSessionClosed = session?.status === 'closed'
+  const isSessionSaved = session?.status === 'saved'
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30 dark:from-slate-950 dark:via-slate-900 dark:to-blue-950/30">
@@ -2193,6 +2487,9 @@ export function ChequeoRutaChicaApp() {
         {isSessionClosed && products.length > 0 ? (
           /* Report View when session is closed */
           <ReportView />
+        ) : isSessionSaved ? (
+          /* Saved Session View - offers Reanudar or Finalizar */
+          <SavedSessionView />
         ) : (
           /* Normal operational view */
           <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">

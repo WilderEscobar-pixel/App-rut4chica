@@ -9,11 +9,29 @@ function getTodayDate(): string {
   return `${year}-${month}-${day}`
 }
 
-// GET: Get current active session (or create one for today if none exists)
-export async function GET() {
+// GET: Get current active/saved session (or create one for today if none exists)
+// Also supports ?savedOnly=true to list all saved sessions for the "Reanudar" feature
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url)
+
+    // List all saved sessions for the "Reanudar Jornada" feature
+    if (searchParams.get('savedOnly') === 'true') {
+      const savedSessions = await db.session.findMany({
+        where: { status: 'saved' },
+        include: {
+          _count: {
+            select: { products: true, assignments: true, scanEvents: true },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+      })
+      return NextResponse.json({ savedSessions })
+    }
+
+    // Find active or saved session
     let session = await db.session.findFirst({
-      where: { status: 'active' },
+      where: { status: { in: ['active', 'saved'] } },
       include: {
         _count: {
           select: { products: true, assignments: true, scanEvents: true },
@@ -21,7 +39,7 @@ export async function GET() {
       },
     })
 
-    // If no active session, find or create one for today
+    // If no active/saved session, find or create one for today
     if (!session) {
       const today = getTodayDate()
       const existingSession = await db.session.findUnique({
@@ -115,6 +133,137 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// PUT: Save session (preserve progress, set status to "saved")
+// This does NOT mark products as missing — they keep their current status
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { sessionId } = body
+
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: 'sessionId is required' },
+        { status: 400 }
+      )
+    }
+
+    const session = await db.session.findUnique({
+      where: { id: sessionId },
+    })
+
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Session not found' },
+        { status: 404 }
+      )
+    }
+
+    if (session.status !== 'active') {
+      return NextResponse.json(
+        { error: 'Only active sessions can be saved' },
+        { status: 400 }
+      )
+    }
+
+    // Simply change status to "saved" — DO NOT mark products as missing
+    const updatedSession = await db.session.update({
+      where: { id: sessionId },
+      data: { status: 'saved' },
+      include: {
+        _count: {
+          select: { products: true, assignments: true, scanEvents: true },
+        },
+      },
+    })
+
+    // Count pending/partial products for the response
+    const pendingCount = await db.product.count({
+      where: { sessionId, status: { in: ['pending', 'partial'] } },
+    })
+
+    return NextResponse.json({
+      success: true,
+      message: `Sesión guardada. ${pendingCount} productos pendientes/parciales quedan para reanudar.`,
+      session: updatedSession,
+      pendingProducts: pendingCount,
+    })
+  } catch (error) {
+    console.error('Error saving session:', error)
+    return NextResponse.json(
+      { error: 'Failed to save session' },
+      { status: 500 }
+    )
+  }
+}
+
+// PATCH: Resume a saved session (set status back to "active")
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { sessionId } = body
+
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: 'sessionId is required' },
+        { status: 400 }
+      )
+    }
+
+    const session = await db.session.findUnique({
+      where: { id: sessionId },
+    })
+
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Session not found' },
+        { status: 404 }
+      )
+    }
+
+    if (session.status !== 'saved') {
+      return NextResponse.json(
+        { error: 'Only saved sessions can be resumed' },
+        { status: 400 }
+      )
+    }
+
+    // Close any other active sessions first (safety)
+    await db.session.updateMany({
+      where: { status: 'active' },
+      data: { status: 'closed' },
+    })
+
+    // Reactivate the saved session
+    const updatedSession = await db.session.update({
+      where: { id: sessionId },
+      data: { status: 'active' },
+      include: {
+        _count: {
+          select: { products: true, assignments: true, scanEvents: true },
+        },
+      },
+    })
+
+    // Count what still needs scanning
+    const pendingCount = await db.product.count({
+      where: { sessionId, status: { in: ['pending', 'partial'] } },
+    })
+
+    return NextResponse.json({
+      success: true,
+      message: `Sesión reanudada. ${pendingCount} productos pendientes por escanear.`,
+      session: updatedSession,
+      pendingProducts: pendingCount,
+    })
+  } catch (error) {
+    console.error('Error resuming session:', error)
+    return NextResponse.json(
+      { error: 'Failed to resume session' },
+      { status: 500 }
+    )
+  }
+}
+
 // DELETE: "Nueva Jornada" - Reset the session for a fresh start
 // This clears all data for the current session so the user can upload new files
 export async function DELETE(request: NextRequest) {
@@ -142,8 +291,8 @@ export async function DELETE(request: NextRequest) {
       )
     }
 
-    // If session is active and has data, require force flag
-    if (session.status === 'active' && !force) {
+    // If session is active/saved and has data, require force flag
+    if ((session.status === 'active' || session.status === 'saved') && !force) {
       const productCount = await db.product.count({
         where: { sessionId },
       })

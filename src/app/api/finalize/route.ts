@@ -26,9 +26,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (session.status !== 'active') {
+    if (session.status !== 'active' && session.status !== 'saved') {
       return NextResponse.json(
-        { error: 'Session is already closed' },
+        { error: 'Session must be active or saved to finalize' },
         { status: 400 }
       )
     }

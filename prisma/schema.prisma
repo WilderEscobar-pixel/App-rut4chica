@@ -11,7 +11,7 @@ datasource db {
 model Session {
   id        String   @id @default(cuid())
   date      String   @unique // YYYY-MM-DD format
-  status    String   @default("active") // active | closed
+  status    String   @default("active") // active | saved | closed
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

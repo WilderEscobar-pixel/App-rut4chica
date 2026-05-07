@@ -192,6 +192,11 @@ interface AppState {
   isScanning: boolean
   isFinalizing: boolean
   isResetting: boolean
+  isSaving: boolean
+  isResuming: boolean
+
+  // Saved sessions for resume feature
+  savedSessions: SessionData[]
 
   // OCR processing state
   ocrMethod: string | null
@@ -213,6 +218,9 @@ interface AppState {
   scanBarcode: (barcode: string, quantity?: number) => Promise<ScanResult | null>
   manualScan: (productCode: string, quantity: number) => Promise<ScanResult | null>
   finalizeSession: () => Promise<boolean>
+  saveSession: () => Promise<boolean>
+  resumeSession: (sessionId: string) => Promise<boolean>
+  fetchSavedSessions: () => Promise<void>
   fetchReport: () => Promise<ReportData | null>
   fetchRecentScans: () => Promise<void>
   resetSession: (force?: boolean) => Promise<boolean>
@@ -237,6 +245,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   isScanning: false,
   isFinalizing: false,
   isResetting: false,
+  isSaving: false,
+  isResuming: false,
+  savedSessions: [],
   ocrMethod: null,
   ocrPages: null,
   ocrConfidence: null,
@@ -254,6 +265,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (data.session) {
         set({ session: data.session })
       }
+      // Always check for saved sessions
+      await get().fetchSavedSessions()
     } catch (error) {
       console.error('Error fetching session:', error)
     } finally {
@@ -413,13 +426,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       // Handle HTTP error responses
       if (!res.ok) {
-        set({ lastScan: { status: 'not_found', message: data.error || 'Product not found' } as ScanResult })
+        // Don't set lastScan for manual scans - the component handles its own toasts
         await get().fetchProducts()
         await get().fetchRecentScans()
         return { status: 'not_found', message: data.error || 'Product not found' } as ScanResult
       }
 
-      set({ lastScan: data as ScanResult })
+      // Don't set lastScan for manual scans to avoid duplicate notifications
+      // The handleManualScan function shows its own toast messages
 
       // Refresh products to show updated status
       await get().fetchProducts()
@@ -486,6 +500,90 @@ export const useAppStore = create<AppState>((set, get) => ({
       return false
     } finally {
       set({ isFinalizing: false })
+    }
+  },
+
+  // ─── Save Session ────────────────────────────────────────────────
+
+  saveSession: async () => {
+    const { session } = get()
+    if (!session) return false
+
+    set({ isSaving: true })
+    try {
+      const res = await fetch('/api/session', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: session.id }),
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        set({
+          session: { ...session, status: 'saved' },
+        })
+        await get().fetchProducts()
+        await get().fetchSavedSessions()
+        return true
+      }
+      return false
+    } catch (error) {
+      console.error('Error saving session:', error)
+      return false
+    } finally {
+      set({ isSaving: false })
+    }
+  },
+
+  // ─── Resume Session ──────────────────────────────────────────────
+
+  resumeSession: async (sessionId: string) => {
+    set({ isResuming: true })
+    try {
+      const res = await fetch('/api/session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        // Reset local state and load the resumed session
+        set({
+          session: data.session,
+          products: [],
+          productSummary: null,
+          scanEvents: [],
+          lastScan: null,
+          report: null,
+          assignmentsMap: {},
+          savedSessions: get().savedSessions.filter(s => s.id !== sessionId),
+        })
+        // Fetch fresh data for the resumed session
+        await get().fetchProducts()
+        await get().fetchRecentScans()
+        return true
+      }
+      return false
+    } catch (error) {
+      console.error('Error resuming session:', error)
+      return false
+    } finally {
+      set({ isResuming: false })
+    }
+  },
+
+  // ─── Fetch Saved Sessions ────────────────────────────────────────
+
+  fetchSavedSessions: async () => {
+    try {
+      const res = await fetch('/api/session?savedOnly=true')
+      const data = await res.json()
+      if (data.savedSessions) {
+        set({ savedSessions: data.savedSessions })
+      }
+    } catch (error) {
+      console.error('Error fetching saved sessions:', error)
     }
   },
 

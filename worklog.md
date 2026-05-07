@@ -68,3 +68,26 @@ Stage Summary:
 - Error handling improved for API responses
 - Worker code now visible in assignment list and scan notifications
 - Scan notifications properly handle bulk scan quantities
+
+---
+Task ID: 9-14
+Agent: Main Agent
+Task: Fix HTML hydration error, toast error on manual scan, worker code extraction, Sin Asignaciones bug, add Save/Resume feature, WiFi scanner instructions
+
+Work Log:
+- Fixed HTML hydration error: Moved stats div out of AlertDialogHeader, placed as sibling between header and quantity selector
+- Fixed toast error on manual scan: Removed lastScan setting in manualScan() store action to prevent duplicate ScanNotification popup (component already shows its own toast)
+- Fixed worker code extraction: Added multi-strategy parser for invoice notes - looks for worker code in NOTAS DE LA FACTURA section, COD. VENDEDOR/TRABAJADOR patterns, and inline Cod: patterns before falling back to CODIGO field
+- Added isValidWorkerCode() helper function to validate worker codes vs document codes
+- Fixed Sin Asignaciones bug: Added fuzzy product code matching - tries exact match, then case-insensitive, then without leading zeros
+- Added Save/Resume session feature with 3 session states (active/saved/closed)
+- Added WiFi scanner connection instructions in Scanner Help dialog
+- All APIs tested and working, lint passes
+
+Stage Summary:
+- HTML hydration error fixed
+- Manual scan toast error fixed (no more duplicate notifications)
+- Worker code now extracted from invoice notes (NOTAS DE LA FACTURA)
+- Product code matching more flexible (case-insensitive, leading zeros)
+- Save/Resume feature fully implemented
+- WiFi scanner instructions added to help dialog

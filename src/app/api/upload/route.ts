@@ -200,12 +200,36 @@ export async function POST(request: NextRequest) {
 
                 if (!productCode || quantity <= 0) continue
 
-                // Find the product in this session
-                const product = await db.product.findUnique({
+                // Find the product in this session - try exact match first, then fuzzy
+                let product = await db.product.findUnique({
                   where: {
                     code_sessionId: { code: productCode, sessionId },
                   },
                 })
+
+                // If not found, try case-insensitive and trimmed matching
+                if (!product) {
+                  const normalizedCode = productCode.trim().toUpperCase()
+                  product = await db.product.findFirst({
+                    where: {
+                      sessionId,
+                      code: { equals: normalizedCode, mode: 'insensitive' },
+                    },
+                  })
+                }
+
+                // If still not found, try matching without leading zeros
+                if (!product) {
+                  const codeNoLeadingZeros = productCode.replace(/^0+/, '') || productCode
+                  if (codeNoLeadingZeros !== productCode) {
+                    product = await db.product.findFirst({
+                      where: {
+                        sessionId,
+                        code: { equals: codeNoLeadingZeros, mode: 'insensitive' },
+                      },
+                    })
+                  }
+                }
 
                 if (!product) {
                   results.errors.push(
@@ -320,10 +344,67 @@ function parseDeliveryNote(text: string): DeliveryNote | null {
     products: [],
   }
 
-  // Extract CODIGO - only take the first non-whitespace token after the colon
+  const lines = text.split(/\n/)
+
+  // Extract CODIGO from header (may be format/document code, not worker code)
   const codigoMatch = text.match(/CODIGO\s*:\s*(\S+)/i)
   if (codigoMatch) {
     note.codigo = codigoMatch[1].trim()
+  }
+
+  // ─── Extract WORKER CODE from "Notas de la factura" section ───
+  // The worker code appears in the invoice notes, not in the "Formato de chequeo de productos" CODIGO field.
+  // We look for it in multiple possible locations:
+  let workerCodeFromNotes = ''
+
+  // Strategy 1: Look for "NOTAS DE LA FACTURA" section and extract code
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (line.match(/NOTAS?\s*(DE\s+LA\s+)?FACTURA/i)) {
+      // The worker code may be on the same line or the next few lines
+      const sameLineMatch = line.match(/NOTAS?\s*(DE\s+LA\s+)?FACTURA\s*:\s*(\S+)/i)
+      if (sameLineMatch && isValidWorkerCode(sameLineMatch[2])) {
+        workerCodeFromNotes = sameLineMatch[2].trim()
+        break
+      }
+      // Check next few lines for a worker code
+      for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+        const nextLine = lines[j].trim()
+        if (nextLine && isValidWorkerCode(nextLine)) {
+          workerCodeFromNotes = nextLine
+          break
+        }
+      }
+      break
+    }
+  }
+
+  // Strategy 2: Look for "COD. VENDEDOR", "COD. TRABAJADOR", "COD. REPARTIDOR" patterns
+  if (!workerCodeFromNotes) {
+    const codWorkerMatch = text.match(/(?:COD\.?\s*(?:VENDEDOR|TRABAJADOR|REPARTIDOR|RUTERO|CHOFER|CONDUCTOR|EMPLEADO)\s*:\s*(\S+))/i)
+    if (codWorkerMatch) {
+      workerCodeFromNotes = codWorkerMatch[1].trim()
+    }
+  }
+
+  // Strategy 3: Look for a code pattern near the worker name/itinerary area
+  // Sometimes the worker code appears as "Cod: 2175" or "(2175)" near the name
+  if (!workerCodeFromNotes && note.itinerario) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      // Look for patterns like "Cod: 2175" or "Código: 2175" or "(2175)"
+      const inlineCodeMatch = line.match(/(?:Cod\.?|Código)\s*:\s*([A-Za-z]{0,2}\d{3,5}[A-Za-z]?)/i)
+      if (inlineCodeMatch && isValidWorkerCode(inlineCodeMatch[1])) {
+        workerCodeFromNotes = inlineCodeMatch[1].trim()
+        break
+      }
+    }
+  }
+
+  // If we found a worker code in the notes, use it instead of the CODIGO field
+  if (workerCodeFromNotes) {
+    console.log(`[Upload] Worker code found in notes: ${workerCodeFromNotes} (replacing CODIGO: ${note.codigo})`)
+    note.codigo = workerCodeFromNotes
   }
 
   // Extract ITINERARIO
@@ -333,7 +414,6 @@ function parseDeliveryNote(text: string): DeliveryNote | null {
   }
 
   // Extract worker name - it's on the line after ITINERARIO
-  const lines = text.split(/\n/)
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim()
     if (line.match(/ITINERARIO/i)) {
@@ -341,7 +421,7 @@ function parseDeliveryNote(text: string): DeliveryNote | null {
         const nameLine = lines[j].trim()
         if (
           nameLine &&
-          !nameLine.match(/^(RIF|CANT|CODIGO|DESCRIPCION|TOTAL|ITINERARIO|ORDEN|RELACION|RUTA|PAG|ZONA|Serie|Fecha|Sin Derecho)/i) &&
+          !nameLine.match(/^(RIF|CANT|CODIGO|DESCRIPCION|TOTAL|ITINERARIO|ORDEN|RELACION|RUTA|PAG|ZONA|Serie|Fecha|Sin Derecho|NOTAS|COD\.)/i) &&
           !nameLine.match(/^\d+$/)
         ) {
           note.name = nameLine.replace(/,\s*$/, '').trim()
@@ -411,6 +491,20 @@ function parseDeliveryNote(text: string): DeliveryNote | null {
   }
 
   return note.codigo ? note : null
+}
+
+// Validate if a string looks like a worker code (e.g., "2175", "221X", "526X")
+function isValidWorkerCode(code: string): boolean {
+  const trimmed = code.trim().replace(/[.,;:)\]]$/, '') // Remove trailing punctuation
+  // Worker codes are typically 3-6 chars, contain digits, may end with a letter
+  if (trimmed.length < 2 || trimmed.length > 8) return false
+  if (!/\d/.test(trimmed)) return false
+  // Must not be a keyword
+  const invalid = ['CODIGO', 'ITINERARIO', 'RUTA', 'ZONA', 'PAG', 'RIF', 'CANT', 'TOTAL', 'ORDEN', 'SERIE', 'FECHA', 'NOTAS', 'FACTURA', 'VENDEDOR', 'TRABAJADOR', 'REPARTIDOR']
+  if (invalid.includes(trimmed.toUpperCase())) return false
+  // Must not be a very long number (like a RIF)
+  if (/^\d{7,}$/.test(trimmed)) return false
+  return true
 }
 
 function isValidProductCode(code: string): boolean {
