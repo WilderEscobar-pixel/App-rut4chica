@@ -1431,6 +1431,9 @@ function ProductRow({ product }: { product: ProductData }) {
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{a.worker.name}</span>
                       <Badge variant="outline" className="text-[10px] px-1 py-0 rounded-md">
+                        Cod. {a.worker.code}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 rounded-md">
                         It. {a.worker.itinerary}
                       </Badge>
                     </div>
@@ -1465,24 +1468,22 @@ function ProductRow({ product }: { product: ProductData }) {
               </div>
               Agregar Cantidad Manual
             </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2 pt-2">
-              <div className="flex items-center gap-2">
-                <span className="font-mono font-semibold text-foreground">{product.code}</span>
-                <span className="text-muted-foreground">—</span>
-                <span className="text-foreground">{product.description}</span>
-              </div>
-              <div className="flex items-center gap-3 text-xs">
-                <span className="text-muted-foreground">
-                  Escaneado: <span className="font-semibold text-foreground">{product.totalScanned}</span>
-                </span>
-                <span className="text-muted-foreground">
-                  Solicitado: <span className="font-semibold text-foreground">{product.totalRequested}</span>
-                </span>
-                <span className="text-muted-foreground">
-                  Falta: <span className="font-semibold text-amber-600">{remaining}</span>
-                </span>
-              </div>
+            <AlertDialogDescription className="pt-2">
+              <span className="font-mono font-semibold text-foreground">{product.code}</span>
+              <span className="text-muted-foreground"> — </span>
+              <span className="text-foreground">{product.description}</span>
             </AlertDialogDescription>
+            <div className="flex items-center gap-3 text-xs mt-2 px-1">
+              <span className="text-muted-foreground">
+                Escaneado: <span className="font-semibold text-foreground">{product.totalScanned}</span>
+              </span>
+              <span className="text-muted-foreground">
+                Solicitado: <span className="font-semibold text-foreground">{product.totalRequested}</span>
+              </span>
+              <span className="text-muted-foreground">
+                Falta: <span className="font-semibold text-amber-600">{remaining}</span>
+              </span>
+            </div>
           </AlertDialogHeader>
 
           {/* Quantity Selector */}
@@ -1775,7 +1776,7 @@ function ProductList() {
 
 // Scan Notification Popup
 function ScanNotification({ scan, onDismiss }: { scan: ScanResult; onDismiss: () => void }) {
-  const isSuccess = scan.status === 'assigned'
+  const isSuccess = scan.status === 'assigned' || scan.status === 'scanned_unassigned'
   const isAlreadyComplete = scan.status === 'already_complete'
   const isNotFound = scan.status === 'not_found'
 
@@ -1821,7 +1822,9 @@ function ScanNotification({ scan, onDismiss }: { scan: ScanResult; onDismiss: ()
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold">
             {isSuccess
-              ? `Producto ${scan.product?.code} escaneado`
+              ? scan.scannedCount && scan.scannedCount > 1
+                ? `${scan.scannedCount} uds. de ${scan.product?.code} registradas`
+                : `Producto ${scan.product?.code} escaneado`
               : isAlreadyComplete
                 ? `Producto ${scan.product?.code} ya completo`
                 : scan.barcode
@@ -1836,10 +1839,13 @@ function ScanNotification({ scan, onDismiss }: { scan: ScanResult; onDismiss: ()
           {scan.assignment && (
             <div className="mt-1.5 text-xs space-y-0.5">
               <p className="text-emerald-700 dark:text-emerald-400 font-medium">
-                → <span className="font-semibold">{scan.assignment.workerName}</span> — Itinerario {scan.assignment.itinerary}
+                → <span className="font-semibold">{scan.assignment.workerName}</span> (Cod. {scan.assignment.workerCode}) — It. {scan.assignment.itinerary}
               </p>
               <p className="text-muted-foreground">
                 Progreso: {scan.assignment.scannedQuantity}/{scan.assignment.quantity}
+                {scan.assignment.allocatedQuantity && scan.assignment.allocatedQuantity > 1 && (
+                  <span className="text-emerald-600 dark:text-emerald-400"> (+{scan.assignment.allocatedQuantity} uds.)</span>
+                )}
               </p>
             </div>
           )}

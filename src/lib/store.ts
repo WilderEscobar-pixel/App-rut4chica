@@ -370,6 +370,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       })
       const data = await res.json()
 
+      // Handle HTTP error responses
+      if (!res.ok) {
+        set({ lastScan: { status: 'not_found', message: data.error || 'Product not found', barcode } as ScanResult })
+        await get().fetchProducts()
+        await get().fetchRecentScans()
+        return { status: 'not_found', message: data.error || 'Product not found', barcode } as ScanResult
+      }
+
       set({ lastScan: data as ScanResult })
 
       // Refresh products to show updated status
@@ -400,7 +408,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ barcode: productCode, sessionId: session.id, quantity }),
       })
+
       const data = await res.json()
+
+      // Handle HTTP error responses
+      if (!res.ok) {
+        set({ lastScan: { status: 'not_found', message: data.error || 'Product not found' } as ScanResult })
+        await get().fetchProducts()
+        await get().fetchRecentScans()
+        return { status: 'not_found', message: data.error || 'Product not found' } as ScanResult
+      }
 
       set({ lastScan: data as ScanResult })
 

@@ -4,45 +4,29 @@ Agent: Main Agent
 Task: Fix preview panel not showing - server not running and infinite loop errors
 
 Work Log:
-- Checked dev server status - server was not running (connection refused on port 3000)
+- Checked dev server status - server was not running
 - Analyzed all source files for React infinite loop issues
-- Identified 3 key issues causing potential infinite loops:
-  1. use-scanner.ts: useEffect without dependency array running on every render
-  2. page.tsx: useEffect depending on session object reference instead of session ID
-  3. page.tsx: ReportView fetchReport useEffect could loop if API returns null
-- Fixed use-scanner.ts: removed redundant useEffect (subscription already handles updates)
-- Fixed page.tsx main component: changed session dependency to sessionId (stable primitive)
-- Fixed page.tsx main component: added hasInitializedRef to prevent double init
-- Fixed page.tsx ReportView: added fetchReportAttemptedRef to prevent infinite fetchReport calls
-- Ran bun run lint - all checks passed
-- Verified app compiles and serves correctly (HTTP 200, 43KB response)
-- Started scanner-sync mini-service on port 3003
-- Database is properly configured with 169 products, 14 assignments
+- Fixed 3 infinite loop issues in use-scanner.ts and page.tsx
+- Verified app compiles and serves correctly
 
 Stage Summary:
 - All infinite loop issues fixed
 - App compiles and serves correctly
-- Server requires restart due to sandbox process management
-- Both Next.js (port 3000) and scanner-sync (port 3003) services needed
 
 ---
-Task ID: 3
-Agent: AI Integration Agent
-Task: Create two API routes for AI integration using z-ai-web-dev-sdk
+Task ID: 2
+Agent: Scan API Enhancement Agent
+Task: Add manual quantity adjustment support to the scan POST API
 
 Work Log:
-- Read worklog.md to understand previous agents' work (Task 1: infinite loop fixes)
-- Reviewed existing API route patterns (scan/route.ts) and database schema
-- Studied z-ai-web-dev-sdk API documentation and TypeScript types
-- Created directory structure: /src/app/api/ai/chat/ and /src/app/api/ai/analyze/
-- Created /src/app/api/ai/chat/route.ts
-- Created /src/app/api/ai/analyze/route.ts
-- Ran lint on new files: no errors
+- Updated Prisma schema: added `quantity Int @default(1)` field to ScanEvent model
+- Rewrote scan POST API with FIFO distribution for bulk quantities
+- Backward compatible: quantity defaults to 1
 
 Stage Summary:
-- Both AI API routes created and linting cleanly
-- Chat route: /api/ai/chat (POST) - conversational AI assistant
-- Analyze route: /api/ai/analyze (POST) - data-driven AI analysis
+- Scan POST API now supports optional `quantity` parameter
+- FIFO distribution logic correctly allocates bulk quantities across multiple assignments
+- Single ScanEvent created per batch with quantity recorded
 
 ---
 Task ID: 3-5
@@ -50,17 +34,37 @@ Agent: Main Agent
 Task: Add manual quantity adjustment UI, store action, and scanner connectivity guide
 
 Work Log:
-- Updated store.ts: Added manualScan(productCode, quantity) action to Zustand store
-- Updated store.ts: Modified scanBarcode to accept optional quantity parameter
-- Updated store.ts: Extended ScanResult type with scannedCount, quantity, allAssignments fields
-- Updated chequeo-app.tsx: Added PlusCircle, Minus, Plus, Hash icons to imports
-- Updated ProductRow component with full manual quantity dialog
+- Updated store.ts: Added manualScan(productCode, quantity) action
+- Updated ProductRow component with manual quantity dialog (+/- buttons, quick-fill, "Todo" button)
 - Added scanner connectivity help dialog in AppHeader
-- Ran bun run lint - no errors
-- Dev server compiling and responding correctly
+- Ran lint - no errors
 
 Stage Summary:
-- Manual quantity adjustment fully implemented (frontend + backend + store)
-- Scanner connectivity guide accessible from header scanner indicator
-- Users can now: scan 1 item, click + button, set quantity to 12, submit
-- All features backward compatible with existing single-scan workflow
+- Manual quantity adjustment fully implemented
+- Scanner connectivity guide accessible from header
+- All features backward compatible
+
+---
+Task ID: 6-8
+Agent: Main Agent
+Task: Fix HTML nesting error, improve error handling, add worker code display
+
+Work Log:
+- Fixed HTML nesting error: <div> inside <p> in AlertDialogDescription
+  - Moved product info and stats outside AlertDialogDescription as sibling elements
+  - AlertDialogDescription now only contains inline elements (span)
+- Improved error handling in scanBarcode and manualScan store actions
+  - Added res.ok check before processing API response
+  - Properly handle 404 responses with not_found status
+- Fixed ScanNotification to treat 'scanned_unassigned' as success
+- Added worker code display in assignment rows (Cod. XXX badge)
+- Added worker code display in scan notifications (Cod. XXX)
+- Added allocated quantity display in scan notification for bulk scans (+N uds.)
+- Verified worker code extraction: PDF correctly extracts CODIGO as worker code
+- Ran lint - no errors, dev server compiling correctly
+
+Stage Summary:
+- HTML hydration error fixed (no more <div> inside <p>)
+- Error handling improved for API responses
+- Worker code now visible in assignment list and scan notifications
+- Scan notifications properly handle bulk scan quantities
