@@ -81,6 +81,7 @@ model ScanEvent {
   workerId    String?  // Auto-assigned worker
   itinerary   String?  // Auto-assigned itinerary
   assignedTo  String?  // Worker name
+  quantity    Int      @default(1) // How many units this scan represents (manual qty adjustment)
   sessionId   String
   createdAt   DateTime @default(now())
 

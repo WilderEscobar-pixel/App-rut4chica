@@ -9,7 +9,8 @@ import {
   PackageCheck, PackageX, ClipboardList,
   FileSpreadsheet, FileText, Loader2, Scan, CircleDot,
   RotateCcw, Zap, Eye, Sparkles, Volume2, VolumeX,
-  MessageSquare, Send, Bot, User, ChevronRight, Brain
+  MessageSquare, Send, Bot, User, ChevronRight, Brain,
+  PlusCircle, Minus, Plus, Hash
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
@@ -245,20 +246,91 @@ function AppHeader() {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
-            {/* Scanner Status */}
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm">
-                    <div className={`h-2 w-2 rounded-full transition-colors ${isScannerListening ? 'bg-emerald-500 animate-pulse' : isSocketConnected ? 'bg-amber-400' : 'bg-red-500'}`} />
-                    <ScanLine className="h-3.5 w-3.5 text-muted-foreground" />
+            {/* Scanner Status - Click for help */}
+            <Dialog>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DialogTrigger asChild>
+                      <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm hover:bg-white/80 dark:hover:bg-slate-800/80 transition-colors">
+                        <div className={`h-2 w-2 rounded-full transition-colors ${isScannerListening ? 'bg-emerald-500 animate-pulse' : isSocketConnected ? 'bg-amber-400' : 'bg-red-500'}`} />
+                        <ScanLine className="h-3.5 w-3.5 text-muted-foreground" />
+                      </button>
+                    </DialogTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isScannerListening ? 'Escáner activo - Clic para ayuda' : isSocketConnected ? 'Escáner conectado - Clic para ayuda' : 'Escáner desconectado - Clic para ayuda'}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <DialogContent className="glass-card rounded-2xl max-w-md">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center">
+                      <ScanLine className="h-4 w-4 text-white" />
+                    </div>
+                    Conexión de Escáner
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 text-sm">
+                  {/* Status */}
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-white/60 dark:bg-slate-800/40">
+                    <div className={`h-3 w-3 rounded-full ${isScannerListening ? 'bg-emerald-500 animate-pulse' : isSocketConnected ? 'bg-amber-400' : 'bg-red-500'}`} />
+                    <span className="font-medium">
+                      {isScannerListening ? 'Escáner activo y escuchando' : isSocketConnected ? 'Escáner conectado en espera' : 'Escáner desconectado'}
+                    </span>
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isScannerListening ? 'Escáner activo - Escuchando' : isSocketConnected ? 'Escáner conectado - En espera' : 'Escáner desconectado'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+
+                  {/* USB/Bluetooth Scanner Info */}
+                  <div className="space-y-2">
+                    <h4 className="font-semibold flex items-center gap-1.5">
+                      <Zap className="h-4 w-4 text-[#007BFF]" />
+                      Escáner USB / Bluetooth
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                      Los escáneres de código de barras USB y Bluetooth funcionan como teclados. Simplemente:
+                    </p>
+                    <ol className="text-xs text-muted-foreground space-y-1 ml-4 list-decimal">
+                      <li>Conecte el escáner al puerto USB o emparéjelo por Bluetooth</li>
+                      <li>El escáner leerá el código de barras y lo enviará como texto rápido</li>
+                      <li>La app detecta automáticamente las lecturas rápidas y las procesa</li>
+                      <li>No necesita hacer clic en ningún campo de texto</li>
+                    </ol>
+                  </div>
+
+                  <Separator />
+
+                  {/* Manual Entry Info */}
+                  <div className="space-y-2">
+                    <h4 className="font-semibold flex items-center gap-1.5">
+                      <PlusCircle className="h-4 w-4 text-[#007BFF]" />
+                      Entrada Manual de Cantidad
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                      ¿Sabes cuántas unidades hay pero no quieres escanear una por una? Usa el botón <strong>+</strong> junto a cada producto para agregar la cantidad directamente.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Ejemplo: Si escaneas 1 "Flips Dulce de Leche" pero sabes que hay 12, haz clic en el botón <strong>+</strong> del producto y ajusta la cantidad a 12.
+                    </p>
+                  </div>
+
+                  <Separator />
+
+                  {/* Tips */}
+                  <div className="space-y-2">
+                    <h4 className="font-semibold flex items-center gap-1.5">
+                      <Eye className="h-4 w-4 text-[#007BFF]" />
+                      Consejos
+                    </h4>
+                    <ul className="text-xs text-muted-foreground space-y-1 ml-4 list-disc">
+                      <li>El escáner debe configurarse para enviar <strong>Enter</strong> al final de cada lectura</li>
+                      <li>El indicador verde = escáner activo y escuchando</li>
+                      <li>Si no funciona, verifique que el escáner envíe los caracteres rápidamente (menos de 50ms entre teclas)</li>
+                    </ul>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {/* Audio Toggle */}
             <TooltipProvider>
@@ -1210,10 +1282,21 @@ function ProductRow({ product }: { product: ProductData }) {
   const assignments = useAppStore((s) => s.assignmentsMap[product.code])
   const [isOpen, setIsOpen] = useState(false)
   const fetchAssignments = useAppStore((s) => s.fetchAssignments)
+  const manualScan = useAppStore((s) => s.manualScan)
+  const isScanning = useAppStore((s) => s.isScanning)
+  const session = useAppStore((s) => s.session)
+
+  // Manual quantity dialog state
+  const [showManualDialog, setShowManualDialog] = useState(false)
+  const [manualQty, setManualQty] = useState(1)
+  const [isManualScanning, setIsManualScanning] = useState(false)
 
   const progressPercent = product.totalRequested > 0
     ? Math.round((product.totalScanned / product.totalRequested) * 100)
     : 0
+
+  const remaining = product.totalRequested - product.totalScanned
+  const isComplete = product.status === 'complete' || remaining <= 0
 
   const handleToggle = async () => {
     const newState = !isOpen
@@ -1223,88 +1306,275 @@ function ProductRow({ product }: { product: ProductData }) {
     }
   }
 
-  return (
-    <Collapsible open={isOpen} onOpenChange={handleToggle}>
-      <motion.div
-        key={`product-${product.code}-${product.status}`}
-        animate={statusTransition}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-l-4 ${getStatusBorderColor(product.status)} ${getStatusBgColor(product.status)} transition-all duration-200 hover:shadow-md cursor-pointer group`}
-        onClick={() => handleToggle()}
-      >
-        {/* Status Icon */}
-        <div className="flex-shrink-0">
-          {getStatusIcon(product.status)}
-        </div>
+  const handleManualScan = async () => {
+    if (manualQty < 1 || isComplete) return
+    setIsManualScanning(true)
+    try {
+      const result = await manualScan(product.code, manualQty)
+      if (result) {
+        if (result.status === 'assigned' || result.status === 'scanned_unassigned') {
+          const count = result.scannedCount || manualQty
+          toast.success(`${count} unidad(es) de ${product.code} registrada(s)`, {
+            description: product.description,
+          })
+          playSuccessSound()
+        } else if (result.status === 'already_complete') {
+          toast.warning(`Producto ${product.code} ya está completo`)
+          playAlertSound()
+        } else {
+          toast.error(`Error: ${result.message}`)
+          playAlertSound()
+        }
+        setShowManualDialog(false)
+        setManualQty(1)
+      } else {
+        toast.error('Error al procesar el escaneo manual')
+        playAlertSound()
+      }
+    } catch {
+      toast.error('Error de conexión al procesar escaneo manual')
+      playAlertSound()
+    } finally {
+      setIsManualScanning(false)
+    }
+  }
 
-        {/* Product Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-mono font-semibold text-foreground">{product.code}</span>
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 rounded-md">
-              B{product.bulto}
-            </Badge>
-            {product.origen && product.origen !== 'R' && (
+  const handleManualButtonClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setManualQty(1)
+    setShowManualDialog(true)
+  }
+
+  // Quick-fill: set qty to remaining
+  const handleFillRemaining = () => {
+    setManualQty(remaining > 0 ? remaining : 1)
+  }
+
+  return (
+    <>
+      <Collapsible open={isOpen} onOpenChange={handleToggle}>
+        <motion.div
+          key={`product-${product.code}-${product.status}`}
+          animate={statusTransition}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-l-4 ${getStatusBorderColor(product.status)} ${getStatusBgColor(product.status)} transition-all duration-200 hover:shadow-md cursor-pointer group`}
+          onClick={() => handleToggle()}
+        >
+          {/* Status Icon */}
+          <div className="flex-shrink-0">
+            {getStatusIcon(product.status)}
+          </div>
+
+          {/* Product Info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-mono font-semibold text-foreground">{product.code}</span>
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 rounded-md">
-                {product.origen}
+                B{product.bulto}
               </Badge>
+              {product.origen && product.origen !== 'R' && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 rounded-md">
+                  {product.origen}
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground truncate">{product.description}</p>
+          </div>
+
+          {/* Progress */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-20">
+              <Progress value={progressPercent} className="h-1.5" />
+            </div>
+            <span className="text-xs font-mono font-medium min-w-[3rem] text-right">
+              {product.totalScanned}/{product.totalRequested}
+            </span>
+          </div>
+
+          {/* Manual Add Button */}
+          {session?.status === 'active' && !isComplete && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleManualButtonClick}
+                    className="h-7 w-7 rounded-lg hover:bg-[#007BFF]/10 hover:text-[#007BFF] transition-colors"
+                  >
+                    <PlusCircle className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Agregar cantidad manualmente
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
+          {/* Expand */}
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity">
+              {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </Button>
+          </CollapsibleTrigger>
+        </motion.div>
+
+        <CollapsibleContent>
+          <div className="ml-6 mr-2 mt-1 mb-2 space-y-1">
+            {assignments ? (
+              assignments.length > 0 ? (
+                assignments.map((a: AssignmentData) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center justify-between text-xs px-3 py-1.5 rounded-lg bg-white/40 dark:bg-slate-800/40 backdrop-blur-sm"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{a.worker.name}</span>
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 rounded-md">
+                        It. {a.worker.itinerary}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">
+                        {a.scannedQuantity}/{a.quantity}
+                      </span>
+                      <div className={`h-2 w-2 rounded-full ${getStatusColor(a.status === 'complete' ? 'complete' : a.scannedQuantity > 0 ? 'partial' : 'pending')}`} />
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground italic px-3">Sin asignaciones</p>
+              )
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-2">
+                <Loader2 className="h-3 w-3 animate-spin text-[#007BFF]" />
+                <span className="text-xs text-muted-foreground">Cargando asignaciones...</span>
+              </div>
             )}
           </div>
-          <p className="text-xs text-muted-foreground truncate">{product.description}</p>
-        </div>
+        </CollapsibleContent>
+      </Collapsible>
 
-        {/* Progress */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <div className="w-20">
-            <Progress value={progressPercent} className="h-1.5" />
-          </div>
-          <span className="text-xs font-mono font-medium min-w-[3rem] text-right">
-            {product.totalScanned}/{product.totalRequested}
-          </span>
-        </div>
+      {/* Manual Quantity Dialog */}
+      <AlertDialog open={showManualDialog} onOpenChange={setShowManualDialog}>
+        <AlertDialogContent className="glass-card rounded-2xl max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-base">
+              <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center">
+                <Hash className="h-4 w-4 text-white" />
+              </div>
+              Agregar Cantidad Manual
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 pt-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-semibold text-foreground">{product.code}</span>
+                <span className="text-muted-foreground">—</span>
+                <span className="text-foreground">{product.description}</span>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-muted-foreground">
+                  Escaneado: <span className="font-semibold text-foreground">{product.totalScanned}</span>
+                </span>
+                <span className="text-muted-foreground">
+                  Solicitado: <span className="font-semibold text-foreground">{product.totalRequested}</span>
+                </span>
+                <span className="text-muted-foreground">
+                  Falta: <span className="font-semibold text-amber-600">{remaining}</span>
+                </span>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
 
-        {/* Expand */}
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity">
-            {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          </Button>
-        </CollapsibleTrigger>
-      </motion.div>
-
-      <CollapsibleContent>
-        <div className="ml-6 mr-2 mt-1 mb-2 space-y-1">
-          {assignments ? (
-            assignments.length > 0 ? (
-              assignments.map((a: AssignmentData) => (
-                <div
-                  key={a.id}
-                  className="flex items-center justify-between text-xs px-3 py-1.5 rounded-lg bg-white/40 dark:bg-slate-800/40 backdrop-blur-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{a.worker.name}</span>
-                    <Badge variant="outline" className="text-[10px] px-1 py-0 rounded-md">
-                      It. {a.worker.itinerary}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">
-                      {a.scannedQuantity}/{a.quantity}
-                    </span>
-                    <div className={`h-2 w-2 rounded-full ${getStatusColor(a.status === 'complete' ? 'complete' : a.scannedQuantity > 0 ? 'partial' : 'pending')}`} />
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground italic px-3">Sin asignaciones</p>
-            )
-          ) : (
-            <div className="flex items-center gap-2 px-3 py-2">
-              <Loader2 className="h-3 w-3 animate-spin text-[#007BFF]" />
-              <span className="text-xs text-muted-foreground">Cargando asignaciones...</span>
+          {/* Quantity Selector */}
+          <div className="py-4">
+            <div className="flex items-center justify-center gap-4">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setManualQty(Math.max(1, manualQty - 1))}
+                disabled={manualQty <= 1}
+                className="h-12 w-12 rounded-xl text-lg font-bold"
+              >
+                <Minus className="h-5 w-5" />
+              </Button>
+              <div className="flex flex-col items-center">
+                <Input
+                  type="number"
+                  min={1}
+                  max={remaining}
+                  value={manualQty}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || 1
+                    setManualQty(Math.max(1, Math.min(val, remaining)))
+                  }}
+                  className="w-24 h-14 text-center text-2xl font-bold rounded-xl border-2 border-[#007BFF]/30 focus:border-[#007BFF]"
+                />
+                <span className="text-[10px] text-muted-foreground mt-1">
+                  máx: {remaining}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setManualQty(Math.min(remaining, manualQty + 1))}
+                disabled={manualQty >= remaining}
+                className="h-12 w-12 rounded-xl text-lg font-bold"
+              >
+                <Plus className="h-5 w-5" />
+              </Button>
             </div>
-          )}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+
+            {/* Quick quantity buttons */}
+            <div className="flex items-center justify-center gap-2 mt-3">
+              {[1, 2, 5, 10, remaining].filter((v, i, a) => v > 0 && a.indexOf(v) === i && v !== manualQty).slice(0, 4).map((qty) => (
+                <Button
+                  key={qty}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setManualQty(qty)}
+                  className="h-7 px-3 rounded-lg text-xs"
+                >
+                  {qty}
+                </Button>
+              ))}
+              {remaining > 1 && remaining !== manualQty && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleFillRemaining}
+                  className="h-7 px-3 rounded-lg text-xs text-[#007BFF] border-[#007BFF]/30 hover:bg-[#007BFF]/10"
+                >
+                  Todo ({remaining})
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="rounded-xl" disabled={isManualScanning}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleManualScan}
+              disabled={isManualScanning || manualQty < 1}
+              className="bg-gradient-to-r from-[#007BFF] to-[#339DFF] hover:from-[#0056b3] hover:to-[#007BFF] text-white rounded-xl"
+            >
+              {isManualScanning ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Procesando...
+                </>
+              ) : (
+                <>
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  Agregar {manualQty} unidad{manualQty !== 1 ? 'es' : ''}
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 

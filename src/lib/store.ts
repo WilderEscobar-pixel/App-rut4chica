@@ -68,6 +68,8 @@ export interface ScanEventData {
 export interface ScanResult {
   status: 'assigned' | 'already_complete' | 'scanned_unassigned' | 'not_found'
   message: string
+  scannedCount?: number
+  quantity?: number
   assignment?: {
     id: string
     workerName: string
@@ -77,8 +79,22 @@ export interface ScanResult {
     productDescription: string
     quantity: number
     scannedQuantity: number
+    allocatedQuantity?: number
     status: string
   }
+  allAssignments?: Array<{
+    id: string
+    workerName: string
+    workerCode: string
+    itinerary: string
+    productCode: string
+    productDescription: string
+    quantity: number
+    previousScannedQuantity: number
+    allocatedQuantity: number
+    scannedQuantity: number
+    status: string
+  }>
   product?: {
     code: string
     description: string
@@ -194,7 +210,8 @@ interface AppState {
   fetchProducts: (filters?: { status?: string; search?: string }) => Promise<void>
   fetchAssignments: (productCode: string) => Promise<void>
   uploadFiles: (excel: File, pdf: File) => Promise<UploadResult | null>
-  scanBarcode: (barcode: string) => Promise<ScanResult | null>
+  scanBarcode: (barcode: string, quantity?: number) => Promise<ScanResult | null>
+  manualScan: (productCode: string, quantity: number) => Promise<ScanResult | null>
   finalizeSession: () => Promise<boolean>
   fetchReport: () => Promise<ReportData | null>
   fetchRecentScans: () => Promise<void>
@@ -337,16 +354,19 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ─── Scan ────────────────────────────────────────────────────────
 
-  scanBarcode: async (barcode: string) => {
+  scanBarcode: async (barcode: string, quantity?: number) => {
     const { session } = get()
     if (!session) return null
 
     set({ isScanning: true })
     try {
+      const body: Record<string, unknown> = { barcode, sessionId: session.id }
+      if (quantity && quantity > 1) body.quantity = quantity
+
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ barcode, sessionId: session.id }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
 
@@ -361,6 +381,38 @@ export const useAppStore = create<AppState>((set, get) => ({
       return data as ScanResult
     } catch (error) {
       console.error('Error scanning barcode:', error)
+      return null
+    } finally {
+      set({ isScanning: false })
+    }
+  },
+
+  // ─── Manual Scan (product code + quantity) ────────────────────────
+
+  manualScan: async (productCode: string, quantity: number) => {
+    const { session } = get()
+    if (!session || quantity < 1) return null
+
+    set({ isScanning: true })
+    try {
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode: productCode, sessionId: session.id, quantity }),
+      })
+      const data = await res.json()
+
+      set({ lastScan: data as ScanResult })
+
+      // Refresh products to show updated status
+      await get().fetchProducts()
+
+      // Refresh recent scans
+      await get().fetchRecentScans()
+
+      return data as ScanResult
+    } catch (error) {
+      console.error('Error manual scanning:', error)
       return null
     } finally {
       set({ isScanning: false })
