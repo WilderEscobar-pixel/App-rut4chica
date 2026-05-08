@@ -9,13 +9,13 @@ import {
   PackageCheck, PackageX, ClipboardList,
   FileSpreadsheet, FileText, Loader2, Scan, CircleDot,
   RotateCcw, Zap, Eye, Sparkles, Volume2, VolumeX,
-  MessageSquare, Send, Bot, User, ChevronRight, Brain,
+  MessageSquare, Send, Bot, User, Brain,
   PlusCircle, Minus, Plus, Hash, Save, PlayCircle
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
 
-import { useAppStore, type ProductData, type AssignmentData, type ScanResult, type ReportData } from '@/lib/store'
+import { useAppStore, type ProductData, type AssignmentData, type ScanResult } from '@/lib/store'
 import { useScanner } from '@/hooks/use-scanner'
 import { playSuccessSound, playAlertSound, playCompleteSound } from '@/lib/audio-feedback'
 
@@ -59,13 +59,6 @@ const fadeInUp = {
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -10 },
   transition: { duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] as [number, number, number, number] }
-}
-
-const scaleIn = {
-  initial: { opacity: 0, scale: 0.9 },
-  animate: { opacity: 1, scale: 1 },
-  exit: { opacity: 0, scale: 0.9 },
-  transition: { duration: 0.2, ease: 'easeOut' }
 }
 
 const statusTransition = {
