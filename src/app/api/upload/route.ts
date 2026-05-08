@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { NextRequest, NextResponse } from 'next/server'
 import { processPdfBuffer } from '@/lib/ocr-engine'
+import { parsePdfWithLLM } from '@/lib/pdf-parser-llm'
 
 // ─── Excel Parsing ──────────────────────────────────────────────────
 
@@ -73,209 +74,339 @@ interface PdfWorker {
 }
 
 /**
+ * Comprehensive set of address-related Spanish words that should NOT be
+ * matched as product codes. These appear in address lines within the
+ * Droguería Nena invoices.
+ */
+const ADDRESS_WORDS = new Set([
+  // Street types
+  'CALLE', 'CARRERA', 'KRA', 'CL', 'DG', 'TV', 'TRANSVERSAL', 'DIAGONAL',
+  'AUTOPISTA', 'AVENIDA', 'AV', 'GLORIETA', 'CALLEJON', 'CARR',
+  // Location types
+  'BARRIO', 'SECTOR', 'ZONA', 'URB', 'URBANIZACION', 'MUNICIPIO',
+  'DEPARTAMENTO', 'VEREDA', 'LOCALIDAD', 'CORREGIMIENTO',
+  // Building/unit types
+  'PISO', 'LOCAL', 'OFICINA', 'INTERIOR', 'BLOQUE', 'TORRE', 'APARTAMENTO',
+  'APT', 'APTO', 'EDIFICIO', 'CASA', 'MANZANA', 'LOTE', 'ETAPA',
+  // Postal
+  'POSTAL',
+  // Directional
+  'SUR', 'NORTE', 'ESTE', 'OESTE', 'BIS',
+  // Misc address
+  'VDA', 'VIUDA', 'LOS', 'LAS', 'EL', 'LA', 'DE', 'DEL', 'NO',
+  'NUM', 'NUMERO', 'NRO', '#', 'KM', 'LT',
+  // Document types that might appear
+  'RIF', 'NIT', 'CC', 'CE', 'TI',
+])
+
+/**
+ * Check if a token looks like a valid product code.
+ * Product codes are typically:
+ * - 4-6 digit numbers (e.g., "10204", "10680")
+ * - 2 letters + 3-4 digits (e.g., "MN076")
+ * - Short alphanumeric codes that are NOT address words
+ */
+function isValidProductCode(token: string, validProductCodes?: Set<string>): boolean {
+  const upper = token.toUpperCase().trim()
+
+  // Must have some content
+  if (!upper || upper.length < 2 || upper.length > 10) return false
+
+  // Skip address words
+  if (ADDRESS_WORDS.has(upper)) return false
+
+  // If we have a set of valid product codes, check against it
+  if (validProductCodes && validProductCodes.size > 0) {
+    if (validProductCodes.has(upper)) return true
+  }
+
+  // Pure numeric codes (4-6 digits)
+  if (/^\d{4,6}$/.test(upper)) return true
+
+  // Letter-prefix codes: 1-3 letters followed by 2-4 digits (e.g., MN076, X35)
+  if (/^[A-Z]{1,3}\d{2,4}$/.test(upper)) return true
+
+  // Numeric codes with letter suffix (e.g., 477X, 516X) - but these are worker codes, not product codes
+  // Worker codes: 3-4 digits + 1-2 letters. We should NOT match these as product codes
+  // Product codes don't typically end in X
+  if (/^\d+[A-Z]{1,2}$/.test(upper)) return false
+
+  return false
+}
+
+/**
  * Parse the PDF text to extract worker information and their product assignments.
  *
  * The PDF from "Droguería Nena" Ruta Chica system typically contains multiple invoices,
  * each representing a worker/vendedor with their assigned products.
  *
- * Each invoice block contains:
- * - CODIGO: (worker code)
- * - NOMBRE: / VENDEDOR: (worker name)
- * - ITINERARIO: (itinerary number)
- * - RIF: (tax ID)
- * - A table of products with codes and quantities
+ * Key fixes from the broken version:
+ * 1. Worker code: Only capture the alphanumeric code, not the whole CODIGO line
+ * 2. Itinerary: Only capture the number, not the rest of the line
+ * 3. Worker name: Try more patterns including SEÑORES, SEÑOR, CLIENTE
+ * 4. Address words: Filter them out from product code matching
+ * 5. Product codes: Validate against known product codes and format rules
  */
-function parsePdfText(text: string): PdfWorker[] {
+function parsePdfText(text: string, validProductCodes?: Set<string>): PdfWorker[] {
   const workers: PdfWorker[] = []
-  const errors: string[] = []
 
-  // Split by form feed (page breaks) or by clear invoice separators
-  // The PDF may have multiple invoices separated by page breaks or repeated headers
+  if (!text || text.trim().length === 0) {
+    console.log('[PDF-Regex] Empty text provided')
+    return []
+  }
+
+  console.log(`[PDF-Regex] Starting regex parse, text length: ${text.length}`)
+  console.log(`[PDF-Regex] First 500 chars: ${text.substring(0, 500)}`)
+
+  // Split by form feed (page breaks) to get individual invoice pages
   const pages = text.split(/\f/).filter(p => p.trim().length > 0)
-  const fullText = text
+  console.log(`[PDF-Regex] Found ${pages.length} pages`)
 
-  // Strategy 1: Look for structured blocks with CODIGO: markers
-  // Each "invoice" block starts with a header containing worker info
-  const invoiceBlocks = fullText.split(/(?=CODIGO\s*:)/i)
+  // Strategy: Split the full text into invoice blocks at each CODIGO: marker
+  // Each block starts with a CODIGO: line and contains one worker's data
+  const invoiceBlocks = text.split(/(?=CODIGO\s*:)/i)
 
   for (const block of invoiceBlocks) {
     if (!block.trim()) continue
 
-    // Extract worker code - look for various patterns
+    // ── Extract worker code: ONLY the alphanumeric code, not the whole line ──
     let workerCode = ''
-    const codeMatch = block.match(/CODIGO\s*:\s*([^\n\r]+)/i)
+    const codeMatch = block.match(/CODIGO\s*:\s*([A-Z0-9]+)/i)
     if (codeMatch) {
-      workerCode = codeMatch[1].trim()
-      // Clean up the code - remove trailing spaces, dots, etc.
-      workerCode = workerCode.replace(/[.\s]+$/, '').trim()
+      workerCode = codeMatch[1].trim().toUpperCase()
     }
 
-    // Extract worker name
-    let workerName = ''
-    const nameMatch = block.match(/(?:NOMBRE|VENDEDOR|CLIENTE)\s*:\s*([^\n\r]+)/i)
-    if (nameMatch) {
-      workerName = nameMatch[1].trim()
-    }
+    if (!workerCode) continue // Skip blocks without a worker code
 
-    // Extract itinerary
+    // ── Extract itinerary: ONLY the number ──
     let itinerary = '0'
-    const itMatch = block.match(/ITINERARIO\s*:\s*([^\n\r]+)/i)
+    const itMatch = block.match(/ITINERARIO\s*:\s*(\d+)/i)
     if (itMatch) {
-      itinerary = itMatch[1].trim().replace(/[.\s]+$/, '')
+      itinerary = itMatch[1].trim()
     }
 
-    // Extract RIF
+    // ── Extract worker name: Try multiple patterns ──
+    let workerName = ''
+
+    // Pattern 1: Explicitly labeled names
+    const labeledNamePatterns = [
+      /SEÑORES\s*:\s*([^\n\r]+)/i,
+      /SEÑOR\s*:\s*([^\n\r]+)/i,
+      /CLIENTE\s*:\s*([^\n\r]+)/i,
+      /NOMBRE\s*:\s*([^\n\r]+)/i,
+      /VENDEDOR\s*:\s*([^\n\r]+)/i,
+    ]
+
+    for (const pattern of labeledNamePatterns) {
+      const match = block.match(pattern)
+      if (match && match[1].trim().length > 2) {
+        workerName = match[1].trim()
+        break
+      }
+    }
+
+    // Pattern 2: If no labeled name found, look for name-like text on the line after CODIGO
+    if (!workerName) {
+      const lines = block.split(/\n/)
+      for (let i = 0; i < lines.length; i++) {
+        if (/CODIGO\s*:/i.test(lines[i])) {
+          // Check the next few lines for a name-like pattern
+          for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+            const nextLine = lines[j].trim()
+            // Skip empty lines, lines that look like addresses, or lines with too many spaces
+            if (!nextLine) continue
+            // Skip lines that are clearly metadata or addresses
+            if (/RUTA|ZONA|ITINERARIO|RIF|PAG|FACTURA|FORMATO|FECHA/i.test(nextLine)) continue
+            if (/CALLE|CARRERA|BARRIO|SECTOR|URB|AVENIDA|CASA|APTO|PISO|BLOQUE|TORRE|ETAPA|MANZANA|LOTE|LOCAL|KM|DIAGONAL|TRANSVERSAL/i.test(nextLine)) continue
+            // A name line should have uppercase words and not be too long (not a full address)
+            if (/^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(nextLine) && nextLine.length > 3 && nextLine.length < 60) {
+              // But skip if it looks like address words
+              const words = nextLine.split(/\s+/)
+              const nonAddressWords = words.filter(w => !ADDRESS_WORDS.has(w.toUpperCase()))
+              if (nonAddressWords.length >= 2) {
+                workerName = nextLine.trim()
+                break
+              }
+            }
+          }
+          break
+        }
+      }
+    }
+
+    // ── Extract RIF ──
     let rif = ''
-    const rifMatch = block.match(/RIF\s*:\s*([^\n\r]+)/i)
+    const rifMatch = block.match(/RIF\s*:\s*([A-Z0-9\-]+)/i)
     if (rifMatch) {
-      rif = rifMatch[1].trim()
+      rif = rifMatch[1].trim().toUpperCase()
     }
 
-    if (!workerCode && !workerName) continue
-
-    // Extract product assignments from the block
-    // Products are typically listed in a table format:
-    // CODE    DESCRIPTION    QUANTITY
-    // Or: CODE  QTY  DESCRIPTION
+    // ── Extract product assignments from the block ──
     const assignments: Array<{ productCode: string; quantity: number }> = []
-
-    // Split block into lines and look for product patterns
     const lines = block.split(/\n/)
 
     for (const line of lines) {
-      // Skip header lines
-      if (/CODIGO|NOMBRE|ITINERARIO|RIF|VENDEDOR|CLIENTE|FACTURA|FORMATO|FECHA|PAGINA/i.test(line)) continue
+      // Skip header/metadata lines
+      if (/CODIGO|NOMBRE|ITINERARIO|RIF|VENDEDOR|CLIENTE|FACTURA|FORMATO|FECHA|PAGINA|PAG:|SEÑOR|RUTA|ZONA/i.test(line)) continue
       if (/^\s*$/.test(line)) continue
 
-      // Pattern 1: Line starts with a product code (alphanumeric, typically 4-6 chars) followed by quantity
-      // e.g., "12194  12  Product Description"
-      // e.g., "MN076   5  Product Description"
-      const productLineMatch = line.match(/^\s*([A-Z0-9]{3,10})\s+(\d+)\s+(.*)/i)
-      if (productLineMatch) {
-        const [, pCode, qty, desc] = productLineMatch
-        // Verify it looks like a product code (not a worker code, itinerary number, etc.)
-        // Product codes are typically numeric or start with letters like MN, FL, etc.
-        if (desc.trim().length > 2) {
-          assignments.push({
-            productCode: pCode.trim(),
-            quantity: Math.max(1, parseInt(qty, 10) || 1),
-          })
+      // The layout from pdftotext -layout has columns separated by many spaces
+      // Product lines typically look like:
+      //   "12194                              Product Description                   12"
+      //   "MN076                              Another Product                        5"
+      // Or the product code at the start, with quantity embedded in the line
+
+      // Pattern 1: Line starts with a valid product code (after optional whitespace)
+      // followed by spaces and possibly a description, then a quantity
+      // We need to be flexible about the spaces between columns
+
+      // First, try to find a product code at the beginning of the line
+      const codeAtStartMatch = line.match(/^\s*([A-Z0-9]{3,10})\s/)
+      if (codeAtStartMatch) {
+        const potentialCode = codeAtStartMatch[1].toUpperCase()
+
+        if (isValidProductCode(potentialCode, validProductCodes)) {
+          // Now find the quantity - typically at the end of the line or near it
+          // Look for a number at the end of the line
+          const endQtyMatch = line.match(/\s+(\d{1,3})\s*$/)
+          if (endQtyMatch) {
+            const qty = parseInt(endQtyMatch[1], 10)
+            if (qty > 0 && qty <= 999) {
+              assignments.push({
+                productCode: potentialCode,
+                quantity: qty,
+              })
+              continue
+            }
+          }
+
+          // Look for quantity separated by multiple spaces somewhere in the line
+          // In layout mode, quantities might be in a fixed column position
+          const midQtyMatch = line.match(/^\s*[A-Z0-9]{3,10}\s{2,}(?:.+?)\s{2,}(\d{1,3})\s/)
+          if (midQtyMatch) {
+            const qty = parseInt(midQtyMatch[1], 10)
+            if (qty > 0 && qty <= 999) {
+              assignments.push({
+                productCode: potentialCode,
+                quantity: qty,
+              })
+              continue
+            }
+          }
+
+          // If we have a valid product code but no quantity, assign quantity 1
+          // (some PDFs might have quantity implied)
+          // But only if we have valid product codes to match against
+          if (validProductCodes && validProductCodes.has(potentialCode)) {
+            assignments.push({
+              productCode: potentialCode,
+              quantity: 1,
+            })
+            continue
+          }
         }
-        continue
       }
 
-      // Pattern 2: Code followed by description then quantity at end
-      // e.g., "12194  Product Description  12"
-      const productLineMatch2 = line.match(/^\s*([A-Z0-9]{3,10})\s+(.+?)\s+(\d+)\s*$/)
-      if (productLineMatch2) {
-        const [, pCode, desc, qty] = productLineMatch2
-        if (desc.trim().length > 2) {
-          assignments.push({
-            productCode: pCode.trim(),
-            quantity: Math.max(1, parseInt(qty, 10) || 1),
-          })
-        }
-        continue
-      }
-
-      // Pattern 3: Tab-separated or pipe-separated values
-      // e.g., "12194\t12\tProduct Description" or "12194|12|Product Description"
-      const sepMatch = line.match(/^\s*([A-Z0-9]{3,10})[\t|]\s*(\d+)[\t|]\s*(.*)/)
+      // Pattern 2: Tab-separated or pipe-separated values
+      const sepMatch = line.match(/^\s*([A-Z0-9]{3,10})[\t|]\s*(\d{1,3})[\t|]/)
       if (sepMatch) {
-        const [, pCode, qty, desc] = sepMatch
-        if (desc.trim().length > 2) {
+        const potentialCode = sepMatch[1].toUpperCase()
+        if (isValidProductCode(potentialCode, validProductCodes)) {
           assignments.push({
-            productCode: pCode.trim(),
-            quantity: Math.max(1, parseInt(qty, 10) || 1),
+            productCode: potentialCode,
+            quantity: Math.max(1, parseInt(sepMatch[2], 10) || 1),
           })
+          continue
         }
-        continue
       }
     }
 
-    if (workerCode || workerName) {
-      workers.push({
-        code: workerCode || `W${workers.length + 1}`,
-        name: workerName || `Trabajador ${workers.length + 1}`,
-        itinerary: itinerary || '0',
-        rif: rif || '',
-        assignments,
-      })
-    }
+    workers.push({
+      code: workerCode,
+      name: workerName || `Trabajador ${workerCode}`,
+      itinerary: itinerary || '0',
+      rif: rif || '',
+      assignments,
+    })
   }
 
-  // Strategy 2: If no workers found, try page-by-page parsing
-  // Each page might represent one invoice/worker
+  // If no workers found with the block-based approach, try page-by-page
   if (workers.length === 0 && pages.length > 1) {
+    console.log('[PDF-Regex] Block parsing found 0 workers, trying page-by-page')
+
     for (const page of pages) {
-      const codeMatch = page.match(/CODIGO\s*:\s*([^\n\r]+)/i)
-      const nameMatch = page.match(/(?:NOMBRE|VENDEDOR|CLIENTE)\s*:\s*([^\n\r]+)/i)
-      const itMatch = page.match(/ITINERARIO\s*:\s*([^\n\r]+)/i)
-      const rifMatch = page.match(/RIF\s*:\s*([^\n\r]+)/i)
+      const codeMatch = page.match(/CODIGO\s*:\s*([A-Z0-9]+)/i)
+      if (!codeMatch) continue
 
-      const workerCode = codeMatch ? codeMatch[1].trim().replace(/[.\s]+$/, '') : ''
-      const workerName = nameMatch ? nameMatch[1].trim() : ''
+      const workerCode = codeMatch[1].trim().toUpperCase()
 
-      if (!workerCode && !workerName) continue
+      const itMatch = page.match(/ITINERARIO\s*:\s*(\d+)/i)
+      const itinerary = itMatch ? itMatch[1].trim() : '0'
+
+      let workerName = ''
+      const namePatterns = [
+        /SEÑORES\s*:\s*([^\n\r]+)/i,
+        /SEÑOR\s*:\s*([^\n\r]+)/i,
+        /CLIENTE\s*:\s*([^\n\r]+)/i,
+        /NOMBRE\s*:\s*([^\n\r]+)/i,
+        /VENDEDOR\s*:\s*([^\n\r]+)/i,
+      ]
+      for (const pattern of namePatterns) {
+        const match = page.match(pattern)
+        if (match && match[1].trim().length > 2) {
+          workerName = match[1].trim()
+          break
+        }
+      }
+
+      let rif = ''
+      const rifMatch = page.match(/RIF\s*:\s*([A-Z0-9\-]+)/i)
+      if (rifMatch) rif = rifMatch[1].trim().toUpperCase()
 
       const assignments: Array<{ productCode: string; quantity: number }> = []
       const lines = page.split(/\n/)
 
       for (const line of lines) {
-        if (/CODIGO|NOMBRE|ITINERARIO|RIF|VENDEDOR|CLIENTE|FACTURA|FORMATO|FECHA|PAGINA/i.test(line)) continue
+        if (/CODIGO|NOMBRE|ITINERARIO|RIF|VENDEDOR|CLIENTE|FACTURA|FORMATO|FECHA|PAGINA|PAG:|SEÑOR|RUTA|ZONA/i.test(line)) continue
         if (/^\s*$/.test(line)) continue
 
-        const m1 = line.match(/^\s*([A-Z0-9]{3,10})\s+(\d+)\s+(.*)/i)
-        if (m1 && m1[3].trim().length > 2) {
-          assignments.push({ productCode: m1[1].trim(), quantity: Math.max(1, parseInt(m1[2], 10) || 1) })
-          continue
-        }
-
-        const m2 = line.match(/^\s*([A-Z0-9]{3,10})\s+(.+?)\s+(\d+)\s*$/)
-        if (m2 && m2[2].trim().length > 2) {
-          assignments.push({ productCode: m2[1].trim(), quantity: Math.max(1, parseInt(m2[3], 10) || 1) })
-          continue
-        }
-
-        const m3 = line.match(/^\s*([A-Z0-9]{3,10})[\t|]\s*(\d+)[\t|]\s*(.*)/)
-        if (m3 && m3[3].trim().length > 2) {
-          assignments.push({ productCode: m3[1].trim(), quantity: Math.max(1, parseInt(m3[2], 10) || 1) })
+        const codeAtStart = line.match(/^\s*([A-Z0-9]{3,10})\s/)
+        if (codeAtStart) {
+          const potentialCode = codeAtStart[1].toUpperCase()
+          if (isValidProductCode(potentialCode, validProductCodes)) {
+            const endQty = line.match(/\s+(\d{1,3})\s*$/)
+            if (endQty) {
+              const qty = parseInt(endQty[1], 10)
+              if (qty > 0 && qty <= 999) {
+                assignments.push({ productCode: potentialCode, quantity: qty })
+                continue
+              }
+            }
+            if (validProductCodes && validProductCodes.has(potentialCode)) {
+              assignments.push({ productCode: potentialCode, quantity: 1 })
+            }
+          }
         }
       }
 
       workers.push({
-        code: workerCode || `W${workers.length + 1}`,
-        name: workerName || `Trabajador ${workers.length + 1}`,
-        itinerary: itMatch ? itMatch[1].trim() : '0',
-        rif: rifMatch ? rifMatch[1].trim() : '',
+        code: workerCode,
+        name: workerName || `Trabajador ${workerCode}`,
+        itinerary,
+        rif,
         assignments,
       })
     }
   }
 
-  // Strategy 3: If still no workers, try a more aggressive approach
-  // Look for any pattern of CODIGO: followed by data
-  if (workers.length === 0) {
-    // Try to find worker info in a less structured way
-    const allCodeMatches = [...fullText.matchAll(/CODIGO\s*:\s*([^\n\r,;]+)/gi)]
-    const allNameMatches = [...fullText.matchAll(/(?:NOMBRE|VENDEDOR)\s*:\s*([^\n\r,;]+)/gi)]
-    const allItMatches = [...fullText.matchAll(/ITINERARIO\s*:\s*([^\n\r,;]+)/gi)]
-
-    const count = Math.max(allCodeMatches.length, allNameMatches.length)
-    for (let i = 0; i < count; i++) {
-      workers.push({
-        code: allCodeMatches[i]?.[1]?.trim()?.replace(/[.\s]+$/, '') || `W${i + 1}`,
-        name: allNameMatches[i]?.[1]?.trim() || `Trabajador ${i + 1}`,
-        itinerary: allItMatches[i]?.[1]?.trim() || '0',
-        rif: '',
-        assignments: [],
-      })
-    }
-  }
-
-  console.log(`[Upload] Parsed ${workers.length} workers from PDF, ${workers.reduce((s, w) => s + w.assignments.length, 0)} total assignments`)
+  console.log(`[PDF-Regex] Parsed ${workers.length} workers, ${workers.reduce((s, w) => s + w.assignments.length, 0)} total assignments`)
   for (const w of workers) {
-    console.log(`[Upload]   Worker: ${w.name} (Cod: ${w.code}, It: ${w.itinerary}) - ${w.assignments.length} assignments`)
+    if (w.assignments.length > 0) {
+      console.log(`[PDF-Regex]   Worker: ${w.name} (Cod: ${w.code}, It: ${w.itinerary}) - ${w.assignments.length} assignments`)
+      for (const a of w.assignments) {
+        console.log(`[PDF-Regex]     -> ${a.productCode} x${a.quantity}`)
+      }
+    }
   }
 
   return workers
@@ -312,6 +443,7 @@ export async function POST(request: NextRequest) {
     let ocrMethod: string | undefined
     let ocrPages: number | undefined
     let ocrConfidence: number | undefined
+    let parsingMethod: string | undefined
 
     // ─── Process Excel files ─────────────────────────────────────────
     const excelFiles: Buffer[] = []
@@ -326,7 +458,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Also check for multiple files in a single 'excel' field
-    // (Some clients send all files in one field)
     const allExcelEntries = [...formData.getAll('excel')].filter(f => f instanceof File) as File[]
     for (const file of allExcelEntries) {
       if (!excelFiles.some(buf => buf.length === (file as File).size)) {
@@ -364,6 +495,9 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[Upload] Total unique products from ${excelFiles.length} Excel file(s): ${allProducts.length}`)
+
+    // Build a set of valid product codes for PDF matching
+    const validProductCodes = new Set(allProducts.map(p => p.code.toUpperCase()))
 
     // Create products in database
     for (const p of allProducts) {
@@ -419,10 +553,11 @@ export async function POST(request: NextRequest) {
     } else {
       // Parse all PDF files and merge workers
       const allWorkers: PdfWorker[] = []
+      const allPdfTexts: string[] = []
 
+      // First, extract text from all PDFs
       for (let i = 0; i < pdfFiles.length; i++) {
         try {
-          // Use OCR engine to extract text
           const ocrResult = await processPdfBuffer(pdfFiles[i])
           if (i === 0) {
             ocrMethod = ocrResult.method === 'pdftotext' ? 'pdftotext' : 'ocr'
@@ -431,35 +566,124 @@ export async function POST(request: NextRequest) {
           }
 
           console.log(`[Upload] PDF file ${i + 1}: extracted ${ocrResult.text.length} chars via ${ocrResult.method} (confidence: ${ocrResult.confidence})`)
+          console.log(`[Upload] PDF file ${i + 1} first 1000 chars: ${ocrResult.text.substring(0, 1000)}`)
 
-          const pdfWorkers = parsePdfText(ocrResult.text)
-          console.log(`[Upload] PDF file ${i + 1}: ${pdfWorkers.length} workers parsed`)
-
-          // Merge workers: if worker code already exists, merge assignments
-          for (const w of pdfWorkers) {
-            const existing = allWorkers.find(ew => ew.code === w.code)
-            if (existing) {
-              // Merge assignments, summing quantities for same product codes
-              for (const a of w.assignments) {
-                const existingAssignment = existing.assignments.find(ea => ea.productCode === a.productCode)
-                if (existingAssignment) {
-                  existingAssignment.quantity += a.quantity
-                } else {
-                  existing.assignments.push({ ...a })
-                }
-              }
-            } else {
-              allWorkers.push({ ...w })
-            }
-          }
+          allPdfTexts.push(ocrResult.text)
         } catch (err) {
-          const msg = `Error parsing PDF file ${i + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`
+          const msg = `Error extracting text from PDF file ${i + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`
           console.error(msg)
           errors.push(msg)
         }
       }
 
-      console.log(`[Upload] Total unique workers from ${pdfFiles.length} PDF file(s): ${allWorkers.length}`)
+      // Combine all PDF texts for parsing
+      const combinedText = allPdfTexts.join('\n\f\n')
+      const productCodeList = Array.from(validProductCodes)
+
+      // ── Step 1: Try LLM-based parsing (PRIMARY method) ──
+      let llmWorkers: PdfWorker[] = []
+      try {
+        console.log('[Upload] Attempting LLM-based PDF parsing (primary method)...')
+        llmWorkers = await parsePdfWithLLM(combinedText, productCodeList)
+        console.log(`[Upload] LLM parsing result: ${llmWorkers.length} workers, ${llmWorkers.reduce((s, w) => s + w.assignments.length, 0)} assignments`)
+      } catch (err) {
+        console.error('[Upload] LLM parsing failed:', err)
+        errors.push(`LLM parsing error: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      }
+
+      // ── Step 2: Try regex-based parsing (FALLBACK method) ──
+      let regexWorkers: PdfWorker[] = []
+      try {
+        console.log('[Upload] Attempting regex-based PDF parsing (fallback method)...')
+        regexWorkers = parsePdfText(combinedText, validProductCodes)
+        console.log(`[Upload] Regex parsing result: ${regexWorkers.length} workers, ${regexWorkers.reduce((s, w) => s + w.assignments.length, 0)} assignments`)
+      } catch (err) {
+        console.error('[Upload] Regex parsing failed:', err)
+      }
+
+      // ── Step 3: Choose the best result ──
+      const llmAssignmentCount = llmWorkers.reduce((s, w) => s + w.assignments.length, 0)
+      const regexAssignmentCount = regexWorkers.reduce((s, w) => s + w.assignments.length, 0)
+
+      // Also check how many LLM assignments match valid product codes
+      const llmValidAssignments = llmWorkers.reduce((s, w) =>
+        s + w.assignments.filter(a => validProductCodes.has(a.productCode.toUpperCase())).length, 0)
+      const regexValidAssignments = regexWorkers.reduce((s, w) =>
+        s + w.assignments.filter(a => validProductCodes.has(a.productCode.toUpperCase())).length, 0)
+
+      console.log(`[Upload] LLM: ${llmWorkers.length} workers, ${llmAssignmentCount} total assignments, ${llmValidAssignments} valid assignments`)
+      console.log(`[Upload] Regex: ${regexWorkers.length} workers, ${regexAssignmentCount} total assignments, ${regexValidAssignments} valid assignments`)
+
+      let selectedWorkers: PdfWorker[]
+
+      if (llmValidAssignments > 0 && llmValidAssignments >= regexValidAssignments) {
+        // LLM parsing found valid assignments and is at least as good as regex
+        selectedWorkers = llmWorkers
+        parsingMethod = 'llm'
+        console.log(`[Upload] Using LLM parsing (better results)`)
+      } else if (regexValidAssignments > 0) {
+        // Regex found more valid assignments
+        selectedWorkers = regexWorkers
+        parsingMethod = 'regex'
+        console.log(`[Upload] Using regex parsing (better results)`)
+      } else if (llmWorkers.length > 0 && regexWorkers.length === 0) {
+        // LLM at least found workers even if no valid assignments
+        selectedWorkers = llmWorkers
+        parsingMethod = 'llm'
+        console.log(`[Upload] Using LLM parsing (only method that found workers)`)
+      } else {
+        // Use whichever found more data
+        selectedWorkers = regexWorkers.length >= llmWorkers.length ? regexWorkers : llmWorkers
+        parsingMethod = regexWorkers.length >= llmWorkers.length ? 'regex' : 'llm'
+        console.log(`[Upload] Using ${parsingMethod} parsing (fallback decision)`)
+      }
+
+      // ── Step 4: Merge workers from the non-selected method if it found different workers ──
+      // If one method found workers the other didn't, merge them in
+      const otherWorkers = parsingMethod === 'llm' ? regexWorkers : llmWorkers
+      for (const ow of otherWorkers) {
+        const existing = selectedWorkers.find(sw => sw.code === ow.code)
+        if (!existing) {
+          // This worker was only found by the other method - add them
+          selectedWorkers.push({ ...ow })
+          console.log(`[Upload] Adding worker ${ow.code} from ${parsingMethod === 'llm' ? 'regex' : 'LLM'} (not found by primary method)`)
+        } else if (existing.assignments.length === 0 && ow.assignments.length > 0) {
+          // The selected method found this worker but with no assignments, the other found assignments
+          existing.assignments = ow.assignments
+          console.log(`[Upload] Using assignments for worker ${ow.code} from ${parsingMethod === 'llm' ? 'regex' : 'LLM'} (primary had 0)`)
+        } else if (!existing.name || existing.name.startsWith('Trabajador')) {
+          // The selected method didn't find a name, use the other method's name if available
+          if (ow.name && !ow.name.startsWith('Trabajador')) {
+            existing.name = ow.name
+          }
+        }
+      }
+
+      // Merge into allWorkers (for cross-PDF-file deduplication)
+      for (const w of selectedWorkers) {
+        const existing = allWorkers.find(ew => ew.code === w.code)
+        if (existing) {
+          // Merge assignments, summing quantities for same product codes
+          for (const a of w.assignments) {
+            const existingAssignment = existing.assignments.find(ea => ea.productCode === a.productCode)
+            if (existingAssignment) {
+              existingAssignment.quantity += a.quantity
+            } else {
+              existing.assignments.push({ ...a })
+            }
+          }
+          // Update name if we now have one and didn't before
+          if (!existing.name || existing.name.startsWith('Trabajador')) {
+            if (w.name && !w.name.startsWith('Trabajador')) {
+              existing.name = w.name
+            }
+          }
+        } else {
+          allWorkers.push({ ...w })
+        }
+      }
+
+      console.log(`[Upload] Total unique workers from ${pdfFiles.length} PDF file(s): ${allWorkers.length}, method: ${parsingMethod}`)
 
       // Create workers and assignments in database
       for (const w of allWorkers) {
@@ -481,7 +705,6 @@ export async function POST(request: NextRequest) {
           })
 
           if (worker) {
-            // Check if this was a new worker or an update
             const existedBefore = allWorkers.indexOf(w) < workersCreated
             if (existedBefore) {
               workersUpdated++
@@ -492,14 +715,32 @@ export async function POST(request: NextRequest) {
 
           // Create assignments for this worker
           for (const a of w.assignments) {
-            // Find the product in this session
-            const product = await db.product.findUnique({
+            // Find the product in this session - try case-insensitive match
+            let product = await db.product.findUnique({
               where: { code_sessionId: { code: a.productCode, sessionId } },
             })
 
+            // Fallback: try case-insensitive search
             if (!product) {
-              // Product not found in Excel - skip assignment but don't error
-              // This can happen when a worker has a product that's not in the current session's Excel
+              const products = await db.product.findMany({
+                where: {
+                  sessionId,
+                  code: { equals: a.productCode, mode: 'insensitive' },
+                },
+                take: 1,
+              })
+              product = products[0] || null
+            }
+
+            // Fallback: try without leading zeros
+            if (!product && /^0+\d+$/.test(a.productCode)) {
+              const strippedCode = a.productCode.replace(/^0+/, '')
+              product = await db.product.findUnique({
+                where: { code_sessionId: { code: strippedCode, sessionId } },
+              })
+            }
+
+            if (!product) {
               console.log(`[Upload] Product ${a.productCode} not found in session, skipping assignment for worker ${w.code}`)
               continue
             }
@@ -545,9 +786,10 @@ export async function POST(request: NextRequest) {
       ocrMethod,
       ocrPages,
       ocrConfidence,
+      parsingMethod,
     }
 
-    console.log(`[Upload] Result: ${productsCreated} products, ${workersCreated} workers, ${assignmentsCreated} assignments, ${errors.length} errors`)
+    console.log(`[Upload] Result: ${productsCreated} products, ${workersCreated} workers, ${assignmentsCreated} assignments, ${errors.length} errors, method: ${parsingMethod}`)
 
     return NextResponse.json({
       success: errors.length === 0 || productsCreated > 0,

@@ -1803,10 +1803,60 @@ function ProductList() {
   const products = useAppStore((s) => s.products)
   const productSummary = useAppStore((s) => s.productSummary)
   const isLoading = useAppStore((s) => s.isLoading)
+  const scanBarcode = useAppStore((s) => s.scanBarcode)
+  const session = useAppStore((s) => s.session)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortBy, setSortBy] = useState('code')
   const [groupByBulto, setGroupByBulto] = useState(false)
+
+  // Manual barcode entry state
+  const [manualBarcode, setManualBarcode] = useState('')
+  const [isManualScanning, setIsManualScanning] = useState(false)
+  const manualInputRef = useRef<HTMLInputElement>(null)
+
+  const handleManualBarcodeSubmit = useCallback(async () => {
+    const barcode = manualBarcode.trim()
+    if (!barcode || isManualScanning) return
+
+    setIsManualScanning(true)
+    try {
+      const result = await scanBarcode(barcode)
+      if (result) {
+        if (result.status === 'assigned' || result.status === 'scanned_unassigned') {
+          const count = result.scannedCount || 1
+          const workerInfo = result.assignment?.workerName
+            ? ` → ${result.assignment.workerName}`
+            : result.allAssignments?.length
+              ? ` → ${result.allAssignments[0].workerName}`
+              : ''
+          toast.success(`✓ ${barcode}: ${count} unidad(es) registrada(s)${workerInfo}`)
+          playSuccessSound()
+        } else if (result.status === 'already_complete') {
+          toast.warning(`Producto ${barcode} ya está completo`)
+          playAlertSound()
+        } else if (result.status === 'not_found') {
+          toast.error(`Producto ${barcode} no encontrado en la lista`)
+          playAlertSound()
+        }
+      }
+      setManualBarcode('')
+      // Keep focus on input for continuous scanning
+      setTimeout(() => manualInputRef.current?.focus(), 100)
+    } catch {
+      toast.error('Error de conexión al escanear')
+      playAlertSound()
+    } finally {
+      setIsManualScanning(false)
+    }
+  }, [manualBarcode, isManualScanning, scanBarcode])
+
+  const handleManualBarcodeKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleManualBarcodeSubmit()
+    }
+  }, [handleManualBarcodeSubmit])
 
   const filteredProducts = useMemo(() => {
     let result = [...products]
@@ -1944,6 +1994,57 @@ function ProductList() {
               </Label>
             </div>
           </div>
+
+          {/* Manual Barcode Entry */}
+          {session?.status === 'active' && products.length > 0 && (
+            <div className="mt-3 flex gap-2">
+              <div className="relative flex-1">
+                <Scan className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#007BFF]" />
+                <Input
+                  ref={manualInputRef}
+                  placeholder="Escanear código manualmente..."
+                  value={manualBarcode}
+                  onChange={(e) => setManualBarcode(e.target.value)}
+                  onKeyDown={handleManualBarcodeKeyDown}
+                  disabled={isManualScanning}
+                  className="pl-8 h-9 text-sm rounded-xl border-[#007BFF]/30 focus:border-[#007BFF] bg-[#007BFF]/5 font-mono"
+                />
+              </div>
+              <Button
+                onClick={handleManualBarcodeSubmit}
+                disabled={isManualScanning || !manualBarcode.trim()}
+                className="h-9 px-4 rounded-xl bg-gradient-to-r from-[#007BFF] to-[#339DFF] hover:from-[#0056b3] hover:to-[#007BFF] text-white shadow-md shadow-[#007BFF]/20"
+              >
+                {isManualScanning ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Scan className="h-4 w-4 mr-1.5" />
+                    Escanear
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+
+          {/* Total scanned units summary */}
+          {productSummary && productSummary.total > 0 && (
+            <div className="mt-2 flex items-center gap-3 px-1">
+              <span className="text-xs text-muted-foreground font-medium">
+                Total unidades escaneadas:
+              </span>
+              <span className="text-xs font-bold text-[#007BFF]">
+                {productSummary.totalScanned}/{productSummary.totalRequested}
+              </span>
+              <Progress
+                value={productSummary.totalRequested > 0 ? (productSummary.totalScanned / productSummary.totalRequested) * 100 : 0}
+                className="h-1.5 flex-1"
+              />
+              <span className="text-[10px] text-muted-foreground font-medium">
+                {productSummary.totalRequested > 0 ? Math.round((productSummary.totalScanned / productSummary.totalRequested) * 100) : 0}%
+              </span>
+            </div>
+          )}
         </CardHeader>
 
         <CardContent className="flex-1 p-3 pt-0">

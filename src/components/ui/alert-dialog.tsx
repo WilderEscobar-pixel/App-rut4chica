@@ -118,6 +118,24 @@ function AlertDialogDescription({
   )
 }
 
+// Safe wrapper for AlertDialogDescription that renders a <div> instead of <p>
+// to avoid hydration errors when containing block-level elements like <div>
+function AlertDialogDescriptionSafe({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Description>) {
+  return (
+    <div
+      data-slot="alert-dialog-description"
+      className={cn("text-muted-foreground text-sm", className)}
+      {...props}
+    >
+      {children}
+    </div>
+  )
+}
+
 function AlertDialogAction({
   className,
   ...props
@@ -152,6 +170,7 @@ export {
   AlertDialogFooter,
   AlertDialogTitle,
   AlertDialogDescription,
+  AlertDialogDescriptionSafe,
   AlertDialogAction,
   AlertDialogCancel,
 }
