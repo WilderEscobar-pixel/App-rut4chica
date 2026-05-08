@@ -44,9 +44,9 @@ export async function parsePdfWithLLM(
 
   const zai = await ZAI.create()
 
-  // Split text into chunks of ~12000 chars at page boundaries if too long
-  // This keeps the prompt within reasonable size for the LLM
-  const MAX_CHARS = 12000
+  // Split text into chunks of ~20000 chars at page boundaries if too long
+  // Larger chunks = fewer API calls = faster processing
+  const MAX_CHARS = 20000
   const chunks = splitTextIntoChunks(text, MAX_CHARS)
 
   console.log(`[PDF-LLM] Processing ${chunks.length} chunk(s), ${productCodes.length} valid product codes`)
@@ -56,6 +56,13 @@ export async function parsePdfWithLLM(
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
     const chunk = chunks[chunkIdx]
     console.log(`[PDF-LLM] Processing chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} chars)`)
+
+    // Add delay between chunks to avoid rate limiting (429 errors)
+    if (chunkIdx > 0) {
+      const delay = 2000 // 2 seconds between requests
+      console.log(`[PDF-LLM] Waiting ${delay}ms before next request to avoid rate limit...`)
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
 
     // Build a condensed product code reference - show first 200 codes and count
     const productCodesPreview = productCodes.length > 200
@@ -104,13 +111,31 @@ PDF TEXT (chunk ${chunkIdx + 1}):
 ${chunk}`
 
     try {
-      const response = await zai.chat.completions.create({
-        model: 'glm-4-flash',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-      })
+      // Retry logic for rate limiting (429 errors)
+      let response
+      let retries = 3
+      while (retries > 0) {
+        try {
+          response = await zai.chat.completions.create({
+            model: 'glm-4-flash',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.1,
+          })
+          break // Success, exit retry loop
+        } catch (apiErr: unknown) {
+          const errMsg = apiErr instanceof Error ? apiErr.message : String(apiErr)
+          if (errMsg.includes('429') && retries > 1) {
+            const waitTime = (4 - retries) * 5000 // 5s, 10s backoff
+            console.log(`[PDF-LLM] Rate limited (429), retrying in ${waitTime}ms... (${retries - 1} retries left)`)
+            await new Promise(resolve => setTimeout(resolve, waitTime))
+            retries--
+          } else {
+            throw apiErr
+          }
+        }
+      }
 
-      const content = response.choices[0]?.message?.content || '[]'
+      const content = response!.choices[0]?.message?.content || '[]'
       console.log(`[PDF-LLM] Chunk ${chunkIdx + 1} raw response length: ${content.length}`)
 
       // Try to parse JSON from the response - handle potential markdown fences

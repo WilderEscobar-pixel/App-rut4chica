@@ -20,3 +20,28 @@ Stage Summary:
 - Total scanned units display restored/enhanced
 - AlertDialogDescriptionSafe added for hydration fix
 - Session reset for testing
+---
+Task ID: 1
+Agent: Main
+Task: Fix PDF processing getting stuck and all products showing "sin asignacion"
+
+Work Log:
+- Analyzed uploaded PDF files to understand actual format: `CANT.  CODIGO  DESCRIPCION` (quantity comes FIRST, then product code)
+- Found that the regex parser was looking for product code at the START of lines, which was wrong for this PDF format
+- Found that regex parser found 121 workers but 0 assignments due to incorrect pattern matching
+- Found that LLM parsing took 2.1 minutes with 13 sequential API calls and hit 429 rate limit
+- Found that Excel column names were different from parser expectations (Cant. Solicitada vs TOTAL, Bulto Despachado vs BULTO)
+- Rewrote the regex PDF parser to match actual format: `QUANTITY  PRODUCT_CODE  DESCRIPTION`
+- Made regex the PRIMARY parser (instant, no API calls) with LLM as supplement only when needed
+- Added rate limiting and retry logic to LLM parser (2s delay between chunks, 429 retry with backoff)
+- Increased LLM chunk size from 12000 to 20000 to reduce API calls
+- Fixed Excel parser to recognize actual column names (Cant. Solicitada, Bulto Despachado)
+- Verified all features working: manual scan, total scanned units display, product assignments
+- Tested with real files: 266 products, 121 workers, 332 assignments, 0 errors, 1.5 seconds
+
+Stage Summary:
+- Processing time reduced from 2.1 minutes to 1.5 seconds (98.8% improvement)
+- All 266 products now have worker assignments (0 "sin asignacion")
+- Regex parser correctly extracts worker code, name, itinerary, and product assignments
+- No more rate limiting (429) errors since regex handles everything instantly
+- Excel parser now correctly reads Cant. Solicitada and Bulto Despachado columns
