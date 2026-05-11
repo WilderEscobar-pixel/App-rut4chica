@@ -1,4 +1,5 @@
 import ZAI from 'z-ai-web-dev-sdk'
+import { db } from '@/lib/db'
 import { NextRequest, NextResponse } from 'next/server'
 
 // Module-level ZAI instance — created once and reused
@@ -47,7 +48,7 @@ function buildSystemPrompt(context?: ChatContext): string {
 
 Conoces en detalle el flujo de trabajo:
 1. Se carga un archivo Excel con los productos y cantidades solicitadas (Fuente 1 - Totales)
-2. Se carga un PDF con las asignaciones de productos a trabajadores/rutas (Fuente 2 - Asignación)
+2. Se carga un PDF con las notas de entrega que contienen las asignaciones de productos a trabajadores/rutas (Fuente 2 - Asignación)
 3. Los trabajadores escanean los códigos de barras de los productos conforme los van despachando
 4. El sistema automáticamente asigna cada escaneo al trabajador correspondiente usando FIFO
 5. Se hace seguimiento del progreso: pendiente → parcial → completo
@@ -55,6 +56,7 @@ Conoces en detalle el flujo de trabajo:
 Puedes ayudar con:
 - Responder preguntas sobre el proceso de escaneo
 - Ayudar a identificar productos por código o descripción
+- Informar qué productos lleva un trabajador específico (buscar por código o nombre)
 - Sugerir acciones cuando hay productos faltantes
 - Proporcionar insights sobre el progreso del escaneo
 - Ayudar a solucionar problemas técnicos del escaneo
@@ -122,10 +124,77 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Build worker context if the user is asking about workers
+    let workerContext = ''
+    const lowerMessage = message.toLowerCase()
+
+    // Check if the user is asking about a specific worker
+    const workerCodeMatch = message.match(/\b([A-Z0-9]{2,6})\b/i)
+    if (workerCodeMatch && (lowerMessage.includes('trabajador') || lowerMessage.includes('lleva') || lowerMessage.includes('pedido') || lowerMessage.includes('productos'))) {
+      const potentialCode = workerCodeMatch[1].toUpperCase()
+      try {
+        const worker = await db.worker.findUnique({
+          where: { code: potentialCode },
+          include: {
+            assignments: {
+              where: { sessionId },
+              include: {
+                product: {
+                  select: { code: true, description: true, totalRequested: true, totalScanned: true, status: true },
+                },
+              },
+            },
+          },
+        })
+        if (worker) {
+          workerContext = `\n\n--- INFORMACIÓN DEL TRABAJADOR ---\n`
+          workerContext += `Código: ${worker.code}\nNombre: ${worker.name}\nItinerario: ${worker.itinerary}\nRIF: ${worker.rif || 'N/A'}\n`
+          workerContext += `Total asignaciones: ${worker.assignments.length}\n`
+          if (worker.assignments.length > 0) {
+            workerContext += `\nProductos asignados:\n`
+            for (const a of worker.assignments) {
+              workerContext += `- [${a.productCode}] ${a.product.description} | Cantidad: ${a.quantity} | Escaneado: ${a.scannedQuantity} | Estado: ${a.status}\n`
+            }
+          }
+          workerContext += `\n--- FIN INFORMACIÓN DEL TRABAJADOR ---\n`
+        }
+      } catch {
+        // Worker lookup failed, continue without worker context
+      }
+    }
+
+    // If the user is asking about workers in general, load all workers with session context
+    if ((lowerMessage.includes('trabajadores') || lowerMessage.includes('vendedores')) && !workerContext) {
+      try {
+        const workers = await db.worker.findMany({
+          include: {
+            assignments: {
+              where: { sessionId },
+              select: { productCode: true, quantity: true, scannedQuantity: true, status: true },
+            },
+          },
+          take: 50,
+          orderBy: { code: 'asc' },
+        })
+        if (workers.length > 0) {
+          workerContext = `\n\n--- LISTA DE TRABAJADORES ---\n`
+          for (const w of workers) {
+            const totalAssigned = w.assignments.reduce((s, a) => s + a.quantity, 0)
+            const totalScanned = w.assignments.reduce((s, a) => s + a.scannedQuantity, 0)
+            const completed = w.assignments.filter(a => a.status === 'complete').length
+            workerContext += `- ${w.name} (Cod: ${w.code}, It: ${w.itinerary}) | ${completed}/${w.assignments.length} completos | ${totalScanned}/${totalAssigned} unidades\n`
+          }
+          workerContext += `\n--- FIN LISTA DE TRABAJADORES ---\n`
+        }
+      } catch {
+        // Worker list failed, continue without
+      }
+    }
+
     const zai = await getZAI()
 
     // Build the system prompt with optional context
-    const systemPrompt = buildSystemPrompt(context)
+    const systemPrompt = buildSystemPrompt(context) + workerContext
 
     // Build conversation messages
     const messages: Array<{ role: 'assistant' | 'user'; content: string }> = [

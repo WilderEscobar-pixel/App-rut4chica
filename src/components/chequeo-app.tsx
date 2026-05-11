@@ -215,7 +215,7 @@ function AppHeader({ userName, onLogout, isLoggingOut }: { userName?: string; on
   return (
     <header className="sticky top-0 z-50 glass-header">
       <div className="max-w-screen-2xl mx-auto px-4 py-3">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center justify-between gap-3">
           {/* Logo & Title */}
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-br from-[#007BFF] to-[#339DFF] shadow-lg shadow-[#007BFF]/25">
@@ -230,7 +230,7 @@ function AppHeader({ userName, onLogout, isLoggingOut }: { userName?: string; on
           </div>
 
           {/* Center: Session info & Progress */}
-          <div className="flex items-center gap-4 flex-1 justify-center">
+          <div className="hidden md:flex items-center gap-4 flex-1 justify-center">
             {session && (
               <div className="flex items-center gap-3">
                 <Badge 
@@ -271,35 +271,39 @@ function AppHeader({ userName, onLogout, isLoggingOut }: { userName?: string; on
           </div>
 
           {/* Right: Actions */}
-          <div className="flex items-center gap-2">
-            {/* User badge - integrated into header */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* User badge - compact with tooltip */}
             {userName && (
-              <div className="flex items-center gap-1.5 mr-1">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#007BFF]/5 dark:bg-[#007BFF]/10 border border-[#007BFF]/10">
-                  <div className="h-5 w-5 rounded-full bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center">
-                    <span className="text-[9px] font-bold text-white">{userName.charAt(0)}</span>
-                  </div>
-                  <span className="text-xs font-medium text-muted-foreground hidden sm:inline">{userName}</span>
-                </div>
-                {onLogout && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onLogout}
-                    disabled={isLoggingOut}
-                    className="h-7 w-7 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-500"
-                  >
-                    {isLoggingOut ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <LogOut className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                )}
-              </div>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1">
+                      <div className="h-7 w-7 rounded-full bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center cursor-default">
+                        <span className="text-[10px] font-bold text-white">{userName.charAt(0)}</span>
+                      </div>
+                      {onLogout && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={onLogout}
+                          disabled={isLoggingOut}
+                          className="h-6 w-6 rounded-md hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-500"
+                        >
+                          {isLoggingOut ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <LogOut className="h-3 w-3" />
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>{userName}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
 
-            <Separator orientation="vertical" className="h-6" />
+            <Separator orientation="vertical" className="h-5" />
 
             {/* Scanner Status - Click for help */}
             <Dialog>
@@ -664,8 +668,8 @@ function UploadPanel() {
   const pdfInputRef = useRef<HTMLInputElement>(null)
 
   const handleUpload = async () => {
-    if (excelFiles.length === 0 || pdfFiles.length === 0) {
-      toast.error('Debe seleccionar al menos un archivo Excel y un PDF')
+    if (excelFiles.length === 0) {
+      toast.error('Debe seleccionar al menos un archivo Excel')
       return
     }
     const result = await uploadFiles(excelFiles, pdfFiles)
@@ -734,7 +738,7 @@ function UploadPanel() {
             Cargar Datos del Día
           </CardTitle>
           <CardDescription className="text-xs">
-            Suba hasta 2 archivos Excel con los productos y hasta 2 PDF con las asignaciones. Los PDF se procesan con OCR automáticamente.
+            Suba el archivo Excel con los productos del día. Opcionalmente agregue PDFs con las notas de entrega para registrar trabajadores y sus asignaciones.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -857,7 +861,7 @@ function UploadPanel() {
           <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
             <Button
               onClick={handleUpload}
-              disabled={isUploading || excelFiles.length === 0 || pdfFiles.length === 0}
+              disabled={isUploading || excelFiles.length === 0}
               className="w-full bg-gradient-to-r from-[#007BFF] to-[#339DFF] hover:from-[#0056b3] hover:to-[#007BFF] text-white rounded-xl shadow-lg shadow-[#007BFF]/20 h-10"
             >
               {isUploading ? (
@@ -1336,6 +1340,238 @@ function AIChatPanel() {
         )}
       </AnimatePresence>
     </>
+  )
+}
+
+// WorkerSearchPanel - Search workers by code to see their product assignments
+function WorkerSearchPanel() {
+  const session = useAppStore((s) => s.session)
+  const [workerSearch, setWorkerSearch] = useState('')
+  const [workerResult, setWorkerResult] = useState<{
+    code: string
+    name: string
+    itinerary: string
+    rif: string
+    assignments: Array<{
+      productCode: string
+      productName: string
+      quantity: number
+      scannedQuantity: number
+      pending: number
+      status: string
+      productStatus: string
+    }>
+    totalAssigned: number
+    totalScanned: number
+    totalProducts: number
+    completedProducts: number
+  } | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const [workerList, setWorkerList] = useState<Array<{
+    id: string
+    code: string
+    name: string
+    itinerary: string
+    totalProducts: number
+    totalAssigned: number
+    totalScanned: number
+    completedProducts: number
+  }>>([])
+  const [showWorkerList, setShowWorkerList] = useState(false)
+
+  const searchWorker = useCallback(async (code: string) => {
+    if (!code.trim()) {
+      setWorkerResult(null)
+      return
+    }
+    setIsSearching(true)
+    try {
+      const params = new URLSearchParams({ code: code.trim() })
+      if (session?.id) params.set('sessionId', session.id)
+      const res = await fetch(`/api/workers?${params.toString()}`)
+      const data = await res.json()
+      if (data.success && data.worker) {
+        setWorkerResult(data.worker)
+      } else {
+        setWorkerResult(null)
+        toast.error(data.error || `Trabajador "${code}" no encontrado`)
+      }
+    } catch {
+      toast.error('Error al buscar trabajador')
+    } finally {
+      setIsSearching(false)
+    }
+  }, [session?.id])
+
+  const loadAllWorkers = useCallback(async () => {
+    if (!session?.id) return
+    try {
+      const params = new URLSearchParams({ sessionId: session.id })
+      const res = await fetch(`/api/workers?${params.toString()}`)
+      const data = await res.json()
+      if (data.success && data.workers) {
+        setWorkerList(data.workers)
+        setShowWorkerList(true)
+      }
+    } catch {
+      toast.error('Error al cargar trabajadores')
+    }
+  }, [session?.id])
+
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      searchWorker(workerSearch)
+    }
+  }, [workerSearch, searchWorker])
+
+  if (session?.status === 'closed') return null
+
+  return (
+    <motion.div {...fadeInUp}>
+      <Card className="glass-card rounded-2xl overflow-hidden">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <div className="h-6 w-6 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
+              <Hash className="h-3 w-3 text-white" />
+            </div>
+            Buscar Trabajador
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Busque por código de trabajador para ver su pedido completo
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Código de trabajador..."
+                value={workerSearch}
+                onChange={(e) => setWorkerSearch(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                className="pl-8 h-8 text-xs rounded-xl border-amber-400/30 focus:border-amber-500"
+              />
+            </div>
+            <Button
+              onClick={() => searchWorker(workerSearch)}
+              disabled={isSearching || !workerSearch.trim()}
+              size="sm"
+              className="h-8 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white text-xs"
+            >
+              {isSearching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+            </Button>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={loadAllWorkers}
+            className="w-full h-7 text-xs rounded-xl text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+          >
+            <Hash className="h-3 w-3 mr-1" />
+            Ver todos los trabajadores
+          </Button>
+
+          {/* Worker Detail */}
+          {workerResult && (
+            <div className="space-y-2 p-3 rounded-xl bg-amber-50/50 dark:bg-amber-950/10 border border-amber-200/50 dark:border-amber-800/30">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold">{workerResult.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Código: {workerResult.code} • Itinerario: {workerResult.itinerary}
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[10px] rounded-lg">
+                  {workerResult.completedProducts}/{workerResult.totalProducts} completos
+                </Badge>
+              </div>
+
+              {/* Progress bar */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Progreso</span>
+                  <span>{workerResult.totalScanned}/{workerResult.totalAssigned} unidades</span>
+                </div>
+                <Progress
+                  value={workerResult.totalAssigned > 0 ? Math.round((workerResult.totalScanned / workerResult.totalAssigned) * 100) : 0}
+                  className="h-2"
+                />
+              </div>
+
+              {/* Product list */}
+              <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1">
+                {workerResult.assignments.map((a, i) => (
+                  <div
+                    key={`${a.productCode}-${i}`}
+                    className="flex items-center justify-between py-1 px-2 rounded-lg text-xs hover:bg-white/50 dark:hover:bg-slate-800/50"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${
+                        a.status === 'complete' ? 'bg-emerald-500' :
+                        a.status === 'pending' ? 'bg-slate-300' :
+                        a.status === 'assigned' ? 'bg-amber-400' :
+                        'bg-red-500'
+                      }`} />
+                      <span className="font-mono text-[10px] text-muted-foreground flex-shrink-0">{a.productCode}</span>
+                      <span className="truncate">{a.productName}</span>
+                    </div>
+                    <span className="flex-shrink-0 font-medium ml-2">
+                      {a.scannedQuantity}/{a.quantity}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Worker List Dialog */}
+          <Dialog open={showWorkerList} onOpenChange={setShowWorkerList}>
+            <DialogContent className="glass-card rounded-2xl max-w-lg max-h-[80vh]">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-base">
+                  <Hash className="h-5 w-5 text-amber-500" />
+                  Trabajadores Registrados ({workerList.length})
+                </DialogTitle>
+              </DialogHeader>
+              <div className="max-h-[60vh] overflow-y-auto custom-scrollbar space-y-1">
+                {workerList.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No hay trabajadores registrados. Cargue un PDF con notas de entrega.
+                  </p>
+                ) : (
+                  workerList.map(w => (
+                    <button
+                      key={w.id}
+                      onClick={() => {
+                        setWorkerSearch(w.code)
+                        searchWorker(w.code)
+                        setShowWorkerList(false)
+                      }}
+                      className="w-full flex items-center justify-between p-3 rounded-xl border border-border/50 hover:bg-amber-50/50 dark:hover:bg-amber-950/10 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{w.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Cod: {w.code} • It: {w.itinerary}
+                        </p>
+                      </div>
+                      <div className="text-right flex-shrink-0 ml-3">
+                        <p className="text-xs font-medium">{w.completedProducts}/{w.totalProducts}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {w.totalScanned}/{w.totalAssigned} uds
+                        </p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        </CardContent>
+      </Card>
+    </motion.div>
   )
 }
 
@@ -2682,6 +2918,7 @@ export function ChequeoRutaChicaApp({ userName, onLogout, isLoggingOut }: { user
             {/* Left Sidebar */}
             <div className="space-y-4">
               <UploadPanel />
+              <WorkerSearchPanel />
               <QuickStats />
               <AIAnalysisCard />
               <RecentScansPanel />
