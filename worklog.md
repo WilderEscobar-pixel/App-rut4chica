@@ -127,3 +127,28 @@ Stage Summary:
 - Login system working: both users authenticate correctly, wrong passwords rejected
 - Duplicate bar CSS bug fixed (backdrop-filter removed, opaque backgrounds)
 - Lint passes clean, dev server compiles without errors
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix Excel parsing (237 instead of 40 products) and answer scanner question
+
+Work Log:
+- Analyzed product codes in database: 168 total (111 numeric 5-digit + 57 alpha-prefix like MN076)
+- User reports only 40 products should exist, meaning the parser is reading too many rows
+- Root cause: Original parser was too permissive - regex `/^[A-Z0-9]{2,10}$/` matched non-product codes
+- Also: column matching used `findColumn` which matched too loosely (e.g., "COD" matching "CONDICION")
+- Also: all sheets were read, including non-product sheets
+- Fixed Excel parser with:
+  - `isValidProductCode()` function with strict validation: rejects common words, short codes, single letters
+  - `findColumnStrict()` replacing `findColumn()`: requires exact column name match, no partial matching
+  - Sheet validation: skips sheets without both CODIGO and quantity columns
+  - Validity ratio check: skips sheets where <30% of rows have valid product codes
+  - Removed "CODE" and "COD" from code column candidates (too loose)
+- Added /api/debug/route.ts endpoint to analyze Excel file structure without saving
+- Could not access scanner image from Google Drive (API returned format error)
+
+Stage Summary:
+- Excel parser significantly improved with strict validation
+- Debug API added at /api/debug for analyzing Excel structure
+- Scanner question answered based on general knowledge (USB HID scanners work with the app)

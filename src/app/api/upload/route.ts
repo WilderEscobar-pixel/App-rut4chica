@@ -13,6 +13,42 @@ interface ExcelProduct {
 }
 
 /**
+ * Check if a string looks like a valid product code for Droguería Nena.
+ *
+ * Product codes are typically:
+ * - Purely numeric: 4-6 digits like "10204", "12194", "4816"
+ * - Alphanumeric with specific prefix: "MN076", "516X", "477X", "B925"
+ *
+ * This function is strict to avoid false positives from other Excel columns.
+ */
+function isValidProductCode(code: string): boolean {
+  // Must be 2-8 characters, alphanumeric only
+  if (!/^[A-Z0-9]{2,8}$/.test(code)) return false
+
+  // Reject obvious non-codes (common Spanish words, abbreviations)
+  const rejectedCodes = new Set([
+    'SI', 'NO', 'NA', 'ND', 'NC', 'R', 'G', 'N', 'S',
+    'TOTAL', 'SUB', 'SUM', 'PARCIAL', 'GENERAL',
+    'REG', 'REGULAR', 'CHEQUEO', 'RUTA', 'CHICA',
+    'ORIGEN', 'BULTO', 'COD', 'CODE', 'DESC',
+    'CANT', 'QTY', 'UN', 'UNO', 'DOS', 'TRES',
+  ])
+  if (rejectedCodes.has(code)) return false
+
+  // Reject single letters or single-letter + single-digit combos
+  if (/^[A-Z]\d?$/.test(code)) return false
+
+  // If it starts with a letter, it should be a known prefix pattern (like MN, B) 
+  // or have at least 3 chars total
+  if (/^[A-Z]/.test(code) && code.length < 3) return false
+
+  // Purely numeric codes should be 3+ digits (to avoid matching row numbers)
+  if (/^\d+$/.test(code) && code.length < 3) return false
+
+  return true
+}
+
+/**
  * Extract product data from an Excel file buffer.
  *
  * Based on the actual Excel format used by Drogueria Nena, the columns are:
@@ -23,6 +59,8 @@ interface ExcelProduct {
  * - ORIGEN                    -> Origin (R = Regular, G = Checked)
  *
  * The function tries multiple possible column name variants for robustness.
+ * It ONLY reads sheets that contain a product code column ("CODIGO" or similar).
+ * Sheets without a code column are skipped entirely.
  */
 function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
@@ -41,16 +79,38 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
 
     // Try to find columns by matching possible header names (case-insensitive)
     const headers = Object.keys(rows[0])
-    const codeCol = findColumn(headers, ['CODIGO', 'CÓDIGO', 'CODE', 'COD'])
-    const descCol = findColumn(headers, ['DESCRIPCION', 'DESCRIPCIÓN', 'DESCRIPCION DEL PRODUCTO', 'DESCRIPTION', 'DESC'])
-    const qtyCol = findColumn(headers, ['CANT. SOLICITADA', 'CANTIDAD', 'TOTAL', 'CANT SOLICITADA', 'CANTIDAD SOLICITADA', 'QTY', 'QUANTITY', 'CANT'])
-    const bultoCol = findColumn(headers, ['BULTO DESPACHADO', 'BULTO', 'PACKAGE', 'BULTO DESP.'])
-    const origenCol = findColumn(headers, ['ORIGEN', 'ORIGIN', 'O'])
+    
+    // Use strict column matching - must find CODIGO exactly
+    const codeCol = findColumnStrict(headers, ['CODIGO', 'CÓDIGO', 'CODIGO PRODUCTO', 'COD. PRODUCTO'])
+    if (!codeCol) {
+      console.warn(`[Excel] Sheet "${sheetName}": No CODIGO column found, skipping sheet`)
+      continue
+    }
+
+    const descCol = findColumnStrict(headers, ['DESCRIPCION', 'DESCRIPCIÓN', 'DESCRIPCION DEL PRODUCTO', 'DESCRIP. PRODUCTO'])
+    const qtyCol = findColumnStrict(headers, ['CANT. SOLICITADA', 'CANTIDAD SOLICITADA', 'CANT SOLICITADA', 'CANTIDAD', 'TOTAL', 'QTY', 'QUANTITY'])
+    const bultoCol = findColumnStrict(headers, ['BULTO DESPACHADO', 'BULTO DESP.', 'BULTO', 'PACKAGE'])
+    const origenCol = findColumnStrict(headers, ['ORIGEN', 'ORIGIN'])
 
     console.log(`[Excel] Sheet "${sheetName}": ${rows.length} rows, columns mapped: code=${codeCol}, desc=${descCol}, qty=${qtyCol}, bulto=${bultoCol}, origen=${origenCol}`)
 
-    if (!codeCol) {
-      console.warn(`[Excel] Sheet "${sheetName}": No product code column found, skipping`)
+    // Validate: if we found a code column but no quantity column at all, this might not be a product sheet
+    if (!qtyCol) {
+      console.warn(`[Excel] Sheet "${sheetName}": Found CODIGO but no quantity column, skipping sheet (might not be product data)`)
+      continue
+    }
+
+    // Count how many rows have valid product codes to verify this is the right sheet
+    let validCodeCount = 0
+    for (const row of rows) {
+      const code = String(row[codeCol] ?? '').trim().toUpperCase()
+      if (code && isValidProductCode(code)) validCodeCount++
+    }
+    
+    // If less than 30% of rows have valid codes, skip this sheet (it's probably not a product sheet)
+    const validRatio = validCodeCount / rows.length
+    if (validRatio < 0.3 && rows.length > 5) {
+      console.warn(`[Excel] Sheet "${sheetName}": Only ${validCodeCount}/${rows.length} rows have valid codes (${Math.round(validRatio * 100)}%), skipping sheet`)
       continue
     }
 
@@ -58,8 +118,8 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
       const code = String(row[codeCol] ?? '').trim().toUpperCase()
       if (!code) continue
 
-      // Validate that the code looks like a product code (alphanumeric, not just numbers from a different column)
-      if (!/^[A-Z0-9]{2,10}$/.test(code)) continue
+      // Strict validation: must look like a real product code
+      if (!isValidProductCode(code)) continue
 
       const description = descCol ? String(row[descCol] ?? '').trim() : code
       const totalRequested = qtyCol ? parseInt(String(row[qtyCol] ?? '0'), 10) || 0 : 0
@@ -84,15 +144,25 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
 
 /**
  * Find a column name from a list of possible names (case-insensitive, accent-insensitive).
+ * STRICT version: requires exact or near-exact match, not partial.
  */
-function findColumn(headers: string[], candidates: string[]): string | null {
+function findColumnStrict(headers: string[], candidates: string[]): string | null {
   const normalized = headers.map((h) =>
     h.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
   )
   for (const candidate of candidates) {
     const norm = candidate.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+    // Try exact match first
     const idx = normalized.indexOf(norm)
     if (idx >= 0) return headers[idx]
+    // Try "contains" match only for longer candidates (3+ words)
+    if (norm.split(/\s+/).length >= 2) {
+      for (let i = 0; i < normalized.length; i++) {
+        if (normalized[i].includes(norm) || norm.includes(normalized[i])) {
+          return headers[i]
+        }
+      }
+    }
   }
   return null
 }
