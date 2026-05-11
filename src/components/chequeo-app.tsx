@@ -10,7 +10,8 @@ import {
   FileSpreadsheet, FileText, Loader2, Scan, CircleDot,
   RotateCcw, Zap, Eye, Sparkles, Volume2, VolumeX,
   MessageSquare, Send, Bot, User, Brain,
-  PlusCircle, Minus, Plus, Hash, Save, PlayCircle
+  PlusCircle, Minus, Plus, Hash, Save, PlayCircle,
+  LogOut
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
@@ -138,7 +139,7 @@ function formatDate(dateStr: string): string {
 // ─── Sub-Components ──────────────────────────────────────────────────
 
 // Header Component
-function AppHeader() {
+function AppHeader({ userName, onLogout, isLoggingOut }: { userName?: string; onLogout?: () => void; isLoggingOut?: boolean }) {
   const session = useAppStore((s) => s.session)
   const isSocketConnected = useAppStore((s) => s.isSocketConnected)
   const isScannerListening = useAppStore((s) => s.isScannerListening)
@@ -271,6 +272,35 @@ function AppHeader() {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
+            {/* User badge - integrated into header */}
+            {userName && (
+              <div className="flex items-center gap-1.5 mr-1">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#007BFF]/5 dark:bg-[#007BFF]/10 border border-[#007BFF]/10">
+                  <div className="h-5 w-5 rounded-full bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center">
+                    <span className="text-[9px] font-bold text-white">{userName.charAt(0)}</span>
+                  </div>
+                  <span className="text-xs font-medium text-muted-foreground hidden sm:inline">{userName}</span>
+                </div>
+                {onLogout && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onLogout}
+                    disabled={isLoggingOut}
+                    className="h-7 w-7 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-500"
+                  >
+                    {isLoggingOut ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <LogOut className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                )}
+              </div>
+            )}
+
+            <Separator orientation="vertical" className="h-6" />
+
             {/* Scanner Status - Click for help */}
             <Dialog>
               <TooltipProvider>
@@ -2555,7 +2585,7 @@ function SavedSessionView() {
 
 // ─── Main Page Component ─────────────────────────────────────────────
 
-export function ChequeoRutaChicaApp() {
+export function ChequeoRutaChicaApp({ userName, onLogout, isLoggingOut }: { userName?: string; onLogout?: () => void; isLoggingOut?: boolean } = {}) {
   const session = useAppStore((s) => s.session)
   const fetchSession = useAppStore((s) => s.fetchSession)
   const fetchProducts = useAppStore((s) => s.fetchProducts)
@@ -2636,7 +2666,7 @@ export function ChequeoRutaChicaApp() {
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30 dark:from-slate-950 dark:via-slate-900 dark:to-blue-950/30">
       {/* Header */}
-      <AppHeader />
+      <AppHeader userName={userName} onLogout={onLogout} isLoggingOut={isLoggingOut} />
 
       {/* Main Content */}
       <main className="flex-1 max-w-screen-2xl mx-auto w-full px-4 py-4">

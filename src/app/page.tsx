@@ -3,12 +3,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import { LoginForm } from '@/components/ui/login-form'
-import { Button } from '@/components/ui/button'
-import { Package, LogOut, Loader2 } from 'lucide-react'
+import { Package } from 'lucide-react'
 import { toast } from 'sonner'
 
 const ChequeoRutaChicaApp = dynamic(
-  () => import('@/components/chequeo-app').then((mod) => mod.ChequeoRutaChicaApp),
+  () => import('@/components/chequeo-app').then((mod) => mod.ChequeoRutaChicaApp) as any,
   {
     ssr: false,
     loading: () => (
@@ -117,32 +116,12 @@ export default function ChequeoRutaChicaPage() {
     return <LoginForm onLogin={handleLogin} />
   }
 
-  // Show main app with user badge
+  // Show main app — user badge is integrated into the header
   return (
-    <div className="relative">
-      {/* User badge - floating top right */}
-      <div className="fixed top-2 right-2 z-[60] flex items-center gap-2">
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm border border-[#007BFF]/10 shadow-sm text-xs font-medium">
-          <div className="h-5 w-5 rounded-full bg-gradient-to-br from-[#007BFF] to-[#339DFF] flex items-center justify-center">
-            <span className="text-[9px] font-bold text-white">{user.name.charAt(0)}</span>
-          </div>
-          <span className="text-muted-foreground">{user.name}</span>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleLogout}
-          disabled={isLoggingOut}
-          className="h-8 w-8 rounded-xl bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm border border-[#007BFF]/10 shadow-sm"
-        >
-          {isLoggingOut ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <LogOut className="h-3.5 w-3.5" />
-          )}
-        </Button>
-      </div>
-      <ChequeoRutaChicaApp />
-    </div>
+    <ChequeoRutaChicaApp
+      userName={user.name}
+      onLogout={handleLogout}
+      isLoggingOut={isLoggingOut}
+    />
   )
 }

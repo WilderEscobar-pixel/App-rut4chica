@@ -175,3 +175,31 @@ Stage Summary:
 - Product count bug fixed: now reads only the first valid product sheet instead of all sheets
 - Result: 34 products extracted (totalRequested = 40) matching user's expectation
 - No other code changes needed - the fix is isolated to parseExcelBuffer()
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Fix user badge overlapping header + confirm Reporte sheet choice
+
+Work Log:
+- Analyzed both "Reporte" and "Tabla" sheets from the actual Excel file
+- Reporte: Clean product list with proper headers (Código, Descripción, Cant. Solicitada, etc.), 34 products
+- Tabla: Pivot table with 560 rows, weird column names (__EMPTY, __EMPTY_3), harder to parse
+- Chose "Reporte" as the sheet to read — it's cleaner, simpler, and more reliable
+- Current fix already reads "Reporte" correctly (it's the first sheet with product data)
+- Fixed user badge overlapping with header buttons:
+  - Removed floating `fixed top-2 right-2 z-[60]` badge from page.tsx
+  - Integrated user badge INTO the header bar (AppHeader component) as part of the right actions area
+  - Badge now sits before the separator and scanner status button
+  - Added LogOut icon import to chequeo-app.tsx
+  - Added props to ChequeoRutaChicaApp: userName, onLogout, isLoggingOut
+  - Passed props from page.tsx to the component
+  - User name collapses on mobile (hidden sm:inline), avatar initial always visible
+  - Logout button next to badge with red hover effect
+- Lint passes clean, dev server compiles successfully
+
+Stage Summary:
+- Sheet choice: "Reporte" (first valid product sheet, already working)
+- User badge moved from floating overlay to integrated header position
+- No more interference with header action buttons
+- Props flow: page.tsx → ChequeoRutaChicaApp → AppHeader
