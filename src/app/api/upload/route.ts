@@ -66,6 +66,14 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
   const products: ExcelProduct[] = []
 
+  console.log(`[Excel] Workbook has ${workbook.SheetNames.length} sheets: ${workbook.SheetNames.join(', ')}`)
+
+  // STRATEGY: Only read the FIRST sheet that contains product data.
+  // The "FORMATO DE CHEQUEO DE PRODUCTOS" Excel typically has:
+  //   - Sheet 1 ("Reporte"): The actual product list for today (this is what we want)
+  //   - Sheet 2+ ("Tabla", "Hoja1", etc.): Pivot tables, old data, summaries — must be skipped
+  // Reading all sheets would incorrectly mix today's products with old/summary data.
+
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName]
     if (!sheet) continue
@@ -75,7 +83,10 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
       defval: '',
     })
 
-    if (rows.length === 0) continue
+    if (rows.length === 0) {
+      console.log(`[Excel] Sheet "${sheetName}": Empty, skipping`)
+      continue
+    }
 
     // Try to find columns by matching possible header names (case-insensitive)
     const headers = Object.keys(rows[0])
@@ -83,7 +94,7 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
     // Use strict column matching - must find CODIGO exactly
     const codeCol = findColumnStrict(headers, ['CODIGO', 'CÓDIGO', 'CODIGO PRODUCTO', 'COD. PRODUCTO'])
     if (!codeCol) {
-      console.warn(`[Excel] Sheet "${sheetName}": No CODIGO column found, skipping sheet`)
+      console.log(`[Excel] Sheet "${sheetName}": No CODIGO column found, skipping`)
       continue
     }
 
@@ -96,7 +107,7 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
 
     // Validate: if we found a code column but no quantity column at all, this might not be a product sheet
     if (!qtyCol) {
-      console.warn(`[Excel] Sheet "${sheetName}": Found CODIGO but no quantity column, skipping sheet (might not be product data)`)
+      console.log(`[Excel] Sheet "${sheetName}": Found CODIGO but no quantity column, skipping (might not be product data)`)
       continue
     }
 
@@ -107,16 +118,19 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
       if (code && isValidProductCode(code)) validCodeCount++
     }
     
-    // If less than 30% of rows have valid codes, skip this sheet (it's probably not a product sheet)
+    // If less than 30% of rows have valid codes, skip this sheet (it's probably a pivot table or summary)
     const validRatio = validCodeCount / rows.length
     if (validRatio < 0.3 && rows.length > 5) {
-      console.warn(`[Excel] Sheet "${sheetName}": Only ${validCodeCount}/${rows.length} rows have valid codes (${Math.round(validRatio * 100)}%), skipping sheet`)
+      console.log(`[Excel] Sheet "${sheetName}": Only ${validCodeCount}/${rows.length} rows have valid codes (${Math.round(validRatio * 100)}%), skipping (likely pivot table or summary)`)
       continue
     }
 
+    // This is the FIRST valid product sheet — extract products and STOP
+    console.log(`[Excel] Sheet "${sheetName}": Valid product sheet found with ${validCodeCount} products. Using this sheet (skipping remaining sheets).`)
+
     for (const row of rows) {
       const code = String(row[codeCol] ?? '').trim().toUpperCase()
-      if (!code) continue
+      if (!code) continue // Skip totals row (empty code)
 
       // Strict validation: must look like a real product code
       if (!isValidProductCode(code)) continue
@@ -137,8 +151,12 @@ function parseExcelBuffer(buffer: Buffer): ExcelProduct[] {
         origen: origen || 'R',
       })
     }
+
+    // Only read the FIRST valid product sheet — break out of the loop
+    break
   }
 
+  console.log(`[Excel] Total products extracted: ${products.length}`)
   return products
 }
 

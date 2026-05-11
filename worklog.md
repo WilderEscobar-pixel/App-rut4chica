@@ -152,3 +152,26 @@ Stage Summary:
 - Excel parser significantly improved with strict validation
 - Debug API added at /api/debug for analyzing Excel structure
 - Scanner question answered based on general knowledge (USB HID scanners work with the app)
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Fix product count bug - app reads 237 products instead of correct 34 (from user's Excel with 40 total qty)
+
+Work Log:
+- Downloaded and analyzed the actual Excel file from Google Sheets
+- Found the Excel has 4 sheets: Reporte (34 products, qty=40), Tabla (pivot table), Hoja1 (137 products, qty=197), Hoja3 (empty)
+- Root cause: parseExcelBuffer() was iterating over ALL sheets and reading products from each one
+- Both "Reporte" and "Hoja1" had Código + Cant. Solicitada columns, so both were read
+- 34 + 137 = 171 unique products (totalRequested: 40 + 197 = 237)
+- The user only wants the "Reporte" sheet (today's product list)
+- Fixed parseExcelBuffer() to only read the FIRST sheet with valid product data
+- Added break statement after the first valid product sheet is processed
+- Added detailed logging for all sheets (which are read, which are skipped, why)
+- Verified fix with the actual Excel file: correctly extracts 34 products from "Reporte" sheet only
+- Lint passes clean
+
+Stage Summary:
+- Product count bug fixed: now reads only the first valid product sheet instead of all sheets
+- Result: 34 products extracted (totalRequested = 40) matching user's expectation
+- No other code changes needed - the fix is isolated to parseExcelBuffer()
