@@ -1,6 +1,0 @@
-[providers.node]
-nodeVersion = "20"
-
-[phases.setup]
-nixPkgs = ["...", "poppler_utils", "tesseract"]
-aptPkgs = ["...", "poppler-utils", "tesseract-ocr"]
