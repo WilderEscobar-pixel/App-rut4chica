@@ -65,5 +65,5 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Run Prisma db push to initialize SQLite database, then start the server
-CMD ["sh", "-c", "npx prisma db push && node server.js"]
+# Run Prisma db push with the EXACT version to avoid Prisma 7 breaking changes, then start the server
+CMD ["sh", "-c", "npx prisma@6.11.1 db push && node server.js"]
