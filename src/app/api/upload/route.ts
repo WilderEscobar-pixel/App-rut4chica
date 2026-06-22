@@ -13,46 +13,36 @@ interface ExcelProduct {
   origen: string
 }
 
-async function parseExcelFile(buffer: Buffer, fileIndex: number): Promise<ExcelProduct[]> {
+async function parseExcelFile(buffer: Buffer): Promise<ExcelProduct[]> {
   const XLSX = await import('xlsx')
   const workbook = XLSX.read(buffer, { type: 'buffer' })
 
-  // Prioritize "Tablas" sheet, then fall back to the first sheet
-  const tablasSheet = workbook.SheetNames.find(
-    (name) => name.toLowerCase().includes('tabla')
+  // Prefer "Reporte" sheet (where column H has the barcode codes), fallback to first sheet
+  const reporteSheet = workbook.SheetNames.find(
+    (name) => name.toLowerCase().includes('reporte')
   )
-  const sheetName = tablasSheet || workbook.SheetNames[0]
+  const sheetName = reporteSheet || workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
-
-  console.log(`[Excel] File ${fileIndex}: Using sheet "${sheetName}" (available: ${workbook.SheetNames.join(', ')})`)
-  if (rows.length > 0) {
-    console.log(`[Excel] File ${fileIndex}: Headers found: ${Object.keys(rows[0]).join(' | ')}`)
-  }
 
   const products: ExcelProduct[] = []
 
   for (const row of rows) {
-    // Column H = Código Barra (VLOOKUP formula). Try barcode column first, fall back to CODIGO column.
-    const barcodeRaw = String(
-      row['Código Barra'] || row['CODIGO BARRA'] || row['Código de Barra'] || row['Codigo Barra'] ||
-      row['CódigoBarra'] || row['CODIGOBARRA'] || row['CodigoBarra'] ||
-      row['CÓDIGO BARRA'] || row['CB'] || row['EAN'] || row['UPC'] || row['BARRA'] || row['Barra'] || ''
+    // Column H = Código Barra (VLOOKUP). Try barcode first, fall back to CODIGO.
+    const barcodeVal = String(
+      row['Código Barra'] || row['CÓDIGO BARRA'] || row['Código de Barra'] || row['Codigo Barra'] ||
+      row['CB'] || row['BARRA'] || row['Barra'] || ''
     ).trim()
 
-    const codigoRaw = String(
+    const codigoVal = String(
       row['CODIGO'] || row['Código'] || row['codigo'] || row['Code'] || row['CODE'] || row['COD'] || row['Cod'] || ''
     ).trim()
 
-    // Pick barcode if valid, otherwise fall back to codigo
-    let code: string
-    if (barcodeRaw && barcodeRaw !== '0' && !barcodeRaw.startsWith('=') && !barcodeRaw.startsWith('#') && barcodeRaw.length >= 2) {
-      code = barcodeRaw
-    } else if (codigoRaw && codigoRaw !== '0' && !codigoRaw.startsWith('=') && !codigoRaw.startsWith('#') && codigoRaw.length >= 2) {
-      code = codigoRaw
-    } else {
-      continue
-    }
+    // Use barcode if it's a real value (not a formula like =VLOOKUP(...) or #N/A)
+    const isValidCode = (v: string) => v && v !== '0' && !v.startsWith('=') && !v.startsWith('#')
+    const code = isValidCode(barcodeVal) ? barcodeVal : codigoVal
+
+    if (!code) continue
 
     const description = String(
       row['DESCRIPCION'] || row['Descripción'] || row['descripcion'] || row['Description'] || row['DESC'] || row['Producto'] || row['PRODUCTO'] || ''
@@ -358,7 +348,7 @@ export async function POST(request: NextRequest) {
     const allProducts: ExcelProduct[] = []
     for (let i = 0; i < excelFiles.length; i++) {
       try {
-        const products = await parseExcelFile(excelFiles[i], i + 1)
+        const products = await parseExcelFile(excelFiles[i])
         console.log(`[Upload] Excel file ${i + 1}: ${products.length} products parsed`)
         for (const p of products) {
           const existing = allProducts.find(ep => ep.code === p.code)
