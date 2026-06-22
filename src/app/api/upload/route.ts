@@ -13,23 +13,38 @@ interface ExcelProduct {
   origen: string
 }
 
-async function parseExcelFile(buffer: Buffer): Promise<ExcelProduct[]> {
+async function parseExcelFile(buffer: Buffer, fileIndex: number): Promise<ExcelProduct[]> {
   const XLSX = await import('xlsx')
   const workbook = XLSX.read(buffer, { type: 'buffer' })
-  const sheetName = workbook.SheetNames[0]
+
+  // Prioritize "Tablas" sheet, then fall back to the first sheet
+  const tablasSheet = workbook.SheetNames.find(
+    (name) => name.toLowerCase().includes('tabla')
+  )
+  const sheetName = tablasSheet || workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+
+  console.log(`[Excel] File ${fileIndex}: Using sheet "${sheetName}" (available: ${workbook.SheetNames.join(', ')})`)
+  if (rows.length > 0) {
+    console.log(`[Excel] File ${fileIndex}: Headers found: ${Object.keys(rows[0]).join(' | ')}`)
+  }
 
   const products: ExcelProduct[] = []
 
   for (const row of rows) {
-    // Try column H (Código Barra from VLOOKUP formula) first, then fall back to Código column
-    const code = String(
-      row['Código Barra'] || row['CODIGO BARRA'] || row['Código de Barra'] ||
+    // Column H = Código Barra (VLOOKUP formula column). Try all possible header names.
+    const rawCode = String(
+      row['Código Barra'] || row['CODIGO BARRA'] || row['Código de Barra'] || row['Codigo Barra'] ||
+      row['CódigoBarra'] || row['CODIGOBARRA'] || row['CodigoBarra'] ||
+      row['CÓDIGO BARRA'] || row['CB'] || row['EAN'] || row['UPC'] || row['BARRA'] || row['Barra'] ||
       row['CODIGO'] || row['Código'] || row['codigo'] || row['Code'] || row['CODE'] || row['COD'] || row['Cod'] || ''
     ).trim()
 
-    if (!code) continue
+    // Skip invalid codes: formulas (=VLOOKUP...), errors (#N/A), empty, "0", or non-product text
+    if (!rawCode || rawCode === '0' || rawCode.startsWith('=') || rawCode.startsWith('#') || rawCode.length < 2) continue
+
+    const code = rawCode
 
     const description = String(
       row['DESCRIPCION'] || row['Descripción'] || row['descripcion'] || row['Description'] || row['DESC'] || row['Producto'] || row['PRODUCTO'] || ''
@@ -335,7 +350,7 @@ export async function POST(request: NextRequest) {
     const allProducts: ExcelProduct[] = []
     for (let i = 0; i < excelFiles.length; i++) {
       try {
-        const products = await parseExcelFile(excelFiles[i])
+        const products = await parseExcelFile(excelFiles[i], i + 1)
         console.log(`[Upload] Excel file ${i + 1}: ${products.length} products parsed`)
         for (const p of products) {
           const existing = allProducts.find(ep => ep.code === p.code)
