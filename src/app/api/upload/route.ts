@@ -23,8 +23,9 @@ async function parseExcelFile(buffer: Buffer): Promise<ExcelProduct[]> {
   const products: ExcelProduct[] = []
 
   for (const row of rows) {
-    // Try multiple column name patterns (Spanish and English)
+    // Try column H (Código Barra from VLOOKUP formula) first, then fall back to Código column
     const code = String(
+      row['Código Barra'] || row['CODIGO BARRA'] || row['Código de Barra'] ||
       row['CODIGO'] || row['Código'] || row['codigo'] || row['Code'] || row['CODE'] || row['COD'] || row['Cod'] || ''
     ).trim()
 
