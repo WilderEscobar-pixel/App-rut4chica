@@ -33,18 +33,26 @@ async function parseExcelFile(buffer: Buffer, fileIndex: number): Promise<ExcelP
   const products: ExcelProduct[] = []
 
   for (const row of rows) {
-    // Column H = Código Barra (VLOOKUP formula column). Try all possible header names.
-    const rawCode = String(
+    // Column H = Código Barra (VLOOKUP formula). Try barcode column first, fall back to CODIGO column.
+    const barcodeRaw = String(
       row['Código Barra'] || row['CODIGO BARRA'] || row['Código de Barra'] || row['Codigo Barra'] ||
       row['CódigoBarra'] || row['CODIGOBARRA'] || row['CodigoBarra'] ||
-      row['CÓDIGO BARRA'] || row['CB'] || row['EAN'] || row['UPC'] || row['BARRA'] || row['Barra'] ||
+      row['CÓDIGO BARRA'] || row['CB'] || row['EAN'] || row['UPC'] || row['BARRA'] || row['Barra'] || ''
+    ).trim()
+
+    const codigoRaw = String(
       row['CODIGO'] || row['Código'] || row['codigo'] || row['Code'] || row['CODE'] || row['COD'] || row['Cod'] || ''
     ).trim()
 
-    // Skip invalid codes: formulas (=VLOOKUP...), errors (#N/A), empty, "0", or non-product text
-    if (!rawCode || rawCode === '0' || rawCode.startsWith('=') || rawCode.startsWith('#') || rawCode.length < 2) continue
-
-    const code = rawCode
+    // Pick barcode if valid, otherwise fall back to codigo
+    let code: string
+    if (barcodeRaw && barcodeRaw !== '0' && !barcodeRaw.startsWith('=') && !barcodeRaw.startsWith('#') && barcodeRaw.length >= 2) {
+      code = barcodeRaw
+    } else if (codigoRaw && codigoRaw !== '0' && !codigoRaw.startsWith('=') && !codigoRaw.startsWith('#') && codigoRaw.length >= 2) {
+      code = codigoRaw
+    } else {
+      continue
+    }
 
     const description = String(
       row['DESCRIPCION'] || row['Descripción'] || row['descripcion'] || row['Description'] || row['DESC'] || row['Producto'] || row['PRODUCTO'] || ''
