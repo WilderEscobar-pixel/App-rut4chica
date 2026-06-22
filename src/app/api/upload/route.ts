@@ -15,53 +15,85 @@ interface ExcelProduct {
 
 async function parseExcelFile(buffer: Buffer): Promise<ExcelProduct[]> {
   const XLSX = await import('xlsx')
-  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellFormula: false })
 
-  // Prefer "Reporte" sheet (where column H has the barcode codes), fallback to first sheet
+  // Find "Reporte" sheet, fallback to first sheet
   const reporteSheet = workbook.SheetNames.find(
     (name) => name.toLowerCase().includes('reporte')
   )
   const sheetName = reporteSheet || workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+
+  // Read as array-of-arrays to access column H by index (0-based, H = index 7)
+  const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+  if (rawRows.length < 2) return []
+
+  // Header row: find which column has the barcode code
+  const headerRow = rawRows[0].map((h) => String(h || '').trim())
+  let codeColIndex = 7 // default: column H (0-indexed = 7)
+
+  for (let i = 0; i < headerRow.length; i++) {
+    const h = headerRow[i].toLowerCase()
+    if (
+      h.includes('código') && (h.includes('barra') || h.includes('cb')) ||
+      h === 'barra' || h === 'ean' || h === 'upc' ||
+      h === 'codigo barra' || h === 'código barra' || h === 'codigo de barra' || h === 'código de barra'
+    ) {
+      codeColIndex = i
+      break
+    }
+  }
+
+  // Build lookup maps for other columns from the header row
+  const colIndex: Record<string, number> = {}
+  for (let i = 0; i < headerRow.length; i++) {
+    colIndex[headerRow[i].toLowerCase()] = i
+  }
+
+  function getVal(row: unknown[], col: string): string {
+    const idx = colIndex[col.toLowerCase()]
+    return idx !== undefined && idx < row.length ? String(row[idx] || '').trim() : ''
+  }
+
+  function getNum(row: unknown[], col: string): number {
+    const idx = colIndex[col.toLowerCase()]
+    if (idx === undefined || idx >= row.length) return 0
+    const v = row[idx]
+    if (typeof v === 'number') return v
+    const n = Number(v)
+    return Number.isNaN(n) ? 0 : n
+  }
 
   const products: ExcelProduct[] = []
 
-  for (const row of rows) {
-    // Column H = Código Barra (VLOOKUP). Try barcode first, fall back to CODIGO.
-    const barcodeVal = String(
-      row['Código Barra'] || row['CÓDIGO BARRA'] || row['Código de Barra'] || row['Codigo Barra'] ||
-      row['CB'] || row['BARRA'] || row['Barra'] || ''
-    ).trim()
+  for (let r = 1; r < rawRows.length; r++) {
+    const row = rawRows[r]
 
-    const codigoVal = String(
-      row['CODIGO'] || row['Código'] || row['codigo'] || row['Code'] || row['CODE'] || row['COD'] || row['Cod'] || ''
-    ).trim()
+    // Column H = barcode code (the only code we use)
+    const code = String(row[codeColIndex] || '').trim()
 
-    // Use barcode if it's a real value (not a formula like =VLOOKUP(...) or #N/A)
-    const isValidCode = (v: string) => v && v !== '0' && !v.startsWith('=') && !v.startsWith('#')
-    const code = isValidCode(barcodeVal) ? barcodeVal : codigoVal
+    // Skip invalid: empty, zero, formulas, errors
+    if (!code || code === '0' || code.startsWith('=') || code.startsWith('#')) continue
 
-    if (!code) continue
+    const description = getVal(row, 'DESCRIPCION')
+      || getVal(row, 'DESCRIPCIÓN')
+      || getVal(row, 'DESC')
+      || getVal(row, 'PRODUCTO')
+      || ''
 
-    const description = String(
-      row['DESCRIPCION'] || row['Descripción'] || row['descripcion'] || row['Description'] || row['DESC'] || row['Producto'] || row['PRODUCTO'] || ''
-    ).trim()
+    const totalRequested = getNum(row, 'CANT. SOLICITADA')
+      || getNum(row, 'CANTIDAD SOLICITADA')
+      || getNum(row, 'TOTAL')
+      || getNum(row, 'CANTIDAD')
+      || getNum(row, 'CANT')
+      || 0
 
-    const totalRequested = Number(
-      row['Cant. Solicitada'] || row['CANT. SOLICITADA'] || row['Cantidad Solicitada'] ||
-      row['TOTAL'] || row['Total'] || row['CANTIDAD'] || row['Cantidad'] || row['cantidad'] ||
-      row['Quantity'] || row['QTY'] || row['CANT'] || row['Cant'] || row['Cant. Despachada'] || 0
-    )
+    const bulto = getNum(row, 'BULTO DESPACHADO')
+      || getNum(row, 'BULTO')
+      || getNum(row, 'PKG')
+      || 0
 
-    const bulto = Number(
-      row['Bulto Despachado'] || row['BULTO DESPACHADO'] || row['Bulto Desp.'] ||
-      row['BULTO'] || row['Bulto'] || row['bulto'] || row['Package'] || row['PKG'] || 0
-    )
-
-    const origen = String(
-      row['ORIGEN'] || row['Origen'] || row['origen'] || row['Origin'] || row['O'] || 'R'
-    ).trim()
+    const origen = getVal(row, 'ORIGEN') || 'R'
 
     if (code && description) {
       products.push({
