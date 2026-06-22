@@ -29,29 +29,33 @@ export interface OcrResult {
  * 2. If insufficient data, fall back to OCR via pdftoppm + tesseract
  */
 export async function extractTextFromPdf(pdfPath: string): Promise<OcrResult> {
-  // Stage 1: Try pdftotext
-  const pdftotextResult = await tryPdftotext(pdfPath)
-  
-  // Check if pdftotext yielded meaningful data
-  // We consider it successful if we find at least one CODIGO: marker
-  const hasCodigoMarkers = /CODIGO\s*:/i.test(pdftotextResult.text)
-  const hasItinerarioMarkers = /ITINERARIO\s*:/i.test(pdftotextResult.text)
-  const hasEnoughContent = pdftotextResult.text.length > 200 && 
-    (hasCodigoMarkers || hasItinerarioMarkers)
+  try {
+    const pdftotextResult = await tryPdftotext(pdfPath)
+    
+    const hasCodigoMarkers = /CODIGO\s*:/i.test(pdftotextResult.text)
+    const hasItinerarioMarkers = /ITINERARIO\s*:/i.test(pdftotextResult.text)
+    const hasEnoughContent = pdftotextResult.text.length > 200 && 
+      (hasCodigoMarkers || hasItinerarioMarkers)
 
-  if (hasEnoughContent) {
-    return {
-      text: pdftotextResult.text,
-      method: 'pdftotext',
-      pagesProcessed: pdftotextResult.pages,
-      confidence: 0.95,
+    if (hasEnoughContent) {
+      return {
+        text: pdftotextResult.text,
+        method: 'pdftotext',
+        pagesProcessed: pdftotextResult.pages,
+        confidence: 0.95,
+      }
     }
-  }
 
-  // Stage 2: Fall back to OCR
-  console.log('[OCR] pdftotext yielded insufficient data, falling back to OCR...')
-  const ocrResult = await tryOcrFallback(pdfPath)
-  return ocrResult
+    console.log('[OCR] pdftotext yielded insufficient data, falling back to OCR...')
+    return await tryOcrFallback(pdfPath)
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') {
+      console.warn('[OCR] OCR tools not installed — cannot extract PDF text')
+      return { text: '', method: 'ocr', pagesProcessed: 0, confidence: 0 }
+    }
+    throw err
+  }
 }
 
 /**
@@ -61,14 +65,17 @@ async function tryPdftotext(pdfPath: string): Promise<{ text: string; pages: num
   const tmpTxt = path.join(os.tmpdir(), `pdftotext_${Date.now()}.txt`)
   
   try {
-    // Use -layout flag to preserve the visual layout of the PDF
     await execFileAsync('pdftotext', ['-layout', pdfPath, tmpTxt])
     const text = await readFile(tmpTxt, 'utf-8')
-    
-    // Estimate pages from form feed characters
     const pages = (text.match(/\f/g) || []).length + 1
-    
     return { text, pages }
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') {
+      console.warn('[OCR] pdftotext not installed — skipping PDF text extraction')
+      return { text: '', pages: 0 }
+    }
+    throw err
   } finally {
     await unlink(tmpTxt).catch(() => {})
   }

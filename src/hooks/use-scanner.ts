@@ -89,15 +89,6 @@ export function useScanner(config: Partial<ScannerConfig> = {}) {
       }
 
       const now = Date.now()
-      const timeSinceLastKey = now - lastKeyTimeRef.current
-
-      // If the gap between keys is too large, start a new buffer
-      if (
-        lastKeyTimeRef.current > 0 &&
-        timeSinceLastKey > cfg.maxInterKeyDelay
-      ) {
-        bufferRef.current = []
-      }
 
       bufferRef.current.push(event.key)
       lastKeyTimeRef.current = now
