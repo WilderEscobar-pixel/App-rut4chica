@@ -2,7 +2,7 @@
  * OCR Engine for PDF Processing
  * 
  * Strategy:
- * 1. Primary: pdf-parse (PDFParse class — best text preservation with tabs/lines)
+ * 1. Primary: pdf-parse (best line/tab preservation)
  * 2. Fallback: pdfjs-dist directly (pure JS, no wrapper)
  * 3. Final fallback: pdftotext + OCR (system tools, Linux/Mac only)
  */
@@ -12,10 +12,11 @@ import { promisify } from 'util'
 import { writeFile, unlink, readFile, mkdir } from 'fs/promises'
 import path from 'path'
 import os from 'os'
-// Static import: more reliable with Turbopack than dynamic import
-import { PDFParse, VerbosityLevel } from 'pdf-parse'
+import { createRequire } from 'module'
 
 const execFileAsync = promisify(execFile)
+// Node.js require for CJS modules (avoids ESM/CJS interop issues in standalone builds)
+const nodeRequire = createRequire(import.meta.url)
 
 export interface OcrResult {
   text: string
@@ -25,9 +26,37 @@ export interface OcrResult {
 }
 
 /**
+ * Load pdf-parse dynamically — tries ESM import first, falls back to CJS require.
+ * This avoids static import issues in Next.js standalone production builds.
+ */
+async function loadPdfParse(): Promise<{
+  PDFParse: new (opts: { data: Buffer; verbosity: number }) => {
+    getText(): Promise<{ text: string }>
+    getInfo(): Promise<{ total: number }>
+    destroy(): Promise<void>
+  }
+  VerbosityLevel: { ERRORS: number }
+}> {
+  // Strategy 1: ESM dynamic import (works in dev/Turbopack/regular Node.js)
+  try {
+    const mod = await import('pdf-parse')
+    if (mod.PDFParse) return mod as unknown as ReturnType<typeof loadPdfParse>
+  } catch { /* fall through */ }
+
+  // Strategy 2: CJS require via createRequire (works in standalone builds)
+  try {
+    const mod = nodeRequire('pdf-parse') as Record<string, unknown>
+    if (mod.PDFParse) return mod as unknown as ReturnType<typeof loadPdfParse>
+  } catch { /* fall through */ }
+
+  throw new Error('pdf-parse not available via import or require')
+}
+
+/**
  * Extract text using pdf-parse (PDFParse class) — best line/tab preservation.
  */
 async function extractWithPdfParse(pdfBuffer: Buffer): Promise<OcrResult> {
+  const { PDFParse, VerbosityLevel } = await loadPdfParse()
   const parser = new PDFParse({ data: pdfBuffer, verbosity: VerbosityLevel.ERRORS })
   const textResult = await parser.getText()
   const infoResult = await parser.getInfo()
