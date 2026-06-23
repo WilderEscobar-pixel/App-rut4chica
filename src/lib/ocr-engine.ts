@@ -2,10 +2,9 @@
  * OCR Engine for PDF Processing
  * 
  * Strategy:
- * 1. First attempt: pdftotext (fast, for text-based PDFs)
- * 2. Fallback: pdftoppm + tesseract OCR (for image-based PDFs)
- * 
- * This ensures both text PDFs and scanned/image PDFs are handled correctly.
+ * 1. Primary: pdf-parse (PDFParse class — best text preservation with tabs/lines)
+ * 2. Fallback: pdfjs-dist directly (pure JS, no wrapper)
+ * 3. Final fallback: pdftotext + OCR (system tools, Linux/Mac only)
  */
 
 import { execFile } from 'child_process'
@@ -13,25 +12,73 @@ import { promisify } from 'util'
 import { writeFile, unlink, readFile, mkdir } from 'fs/promises'
 import path from 'path'
 import os from 'os'
+// Static import: more reliable with Turbopack than dynamic import
+import { PDFParse, VerbosityLevel } from 'pdf-parse'
 
 const execFileAsync = promisify(execFile)
 
 export interface OcrResult {
   text: string
-  method: 'pdftotext' | 'ocr'
+  method: 'pdf-parse' | 'pdfjs' | 'pdftotext' | 'ocr'
   pagesProcessed: number
   confidence: number
 }
 
 /**
- * Extract text from a PDF file using a two-stage approach:
- * 1. Try pdftotext first (fast)
- * 2. If insufficient data, fall back to OCR via pdftoppm + tesseract
+ * Extract text using pdf-parse (PDFParse class) — best line/tab preservation.
  */
-export async function extractTextFromPdf(pdfPath: string): Promise<OcrResult> {
+async function extractWithPdfParse(pdfBuffer: Buffer): Promise<OcrResult> {
+  const parser = new PDFParse({ data: pdfBuffer, verbosity: VerbosityLevel.ERRORS })
+  const textResult = await parser.getText()
+  const infoResult = await parser.getInfo()
+  await parser.destroy()
+  
+  return {
+    text: textResult.text || '',
+    method: 'pdf-parse',
+    pagesProcessed: infoResult.total || 1,
+    confidence: 0.9,
+  }
+}
+
+/**
+ * Fallback: pdfjs-dist directly (no wrapper, works everywhere).
+ * NOTE: text items are space-joined, not tab-separated.
+ */
+async function extractWithPdfjs(pdfBuffer: Buffer): Promise<OcrResult> {
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) })
+  const doc = await loadingTask.promise
+  
+  const pages: string[] = []
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i)
+    const textContent = await page.getTextContent()
+    const pageText = (textContent.items as Array<{ str: string }>)
+      .map((item) => item.str)
+      .join(' ')
+    pages.push(pageText)
+  }
+  
+  const text = pages.map((t, i) => `-- ${i + 1} of ${doc.numPages} --\n${t}`).join('\n\n')
+  
+  return {
+    text,
+    method: 'pdfjs',
+    pagesProcessed: doc.numPages,
+    confidence: 0.85,
+  }
+}
+
+/**
+ * Extract text from a PDF file (pdftotext + OCR fallback only).
+ * Called by processPdfBuffer after pdf-parse didn't yield enough data.
+ */
+async function extractTextFromPdfFile(pdfPath: string): Promise<OcrResult> {
+  // Stage 1: pdftotext (fast on Linux/Mac)
   try {
     const pdftotextResult = await tryPdftotext(pdfPath)
-    
     const hasCodigoMarkers = /CODIGO\s*:/i.test(pdftotextResult.text)
     const hasItinerarioMarkers = /ITINERARIO\s*:/i.test(pdftotextResult.text)
     const hasEnoughContent = pdftotextResult.text.length > 200 && 
@@ -182,15 +229,44 @@ async function tryOcrFallback(pdfPath: string): Promise<OcrResult> {
 }
 
 /**
- * Process an uploaded PDF Buffer directly
- * Saves to temp file, processes, and returns extracted text
+ * Process an uploaded PDF Buffer directly.
+ * Primary: pdf-parse (best formatting). Fallback: pdfjs-dist → system tools.
  */
 export async function processPdfBuffer(pdfBuffer: Buffer): Promise<OcrResult> {
+  console.log(`[OCR] processPdfBuffer called, buffer size: ${pdfBuffer.length} bytes`)
+
+  // Stage 1: pdf-parse (best text preservation with tabs and line breaks)
+  try {
+    const result = await extractWithPdfParse(pdfBuffer)
+    console.log(`[OCR] pdf-parse SUCCESS: ${result.text.length} chars, ${result.pagesProcessed} pages`)
+    if (result.text.length > 200) {
+      return result
+    }
+    console.log('[OCR] pdf-parse returned very little text, trying pdfjs-dist...')
+  } catch (err) {
+    console.warn('[OCR] pdf-parse failed, trying pdfjs-dist:', err instanceof Error ? err.message : String(err))
+  }
+
+  // Stage 2: pdfjs-dist directly (pure JS, no wrapper)
+  try {
+    const result = await extractWithPdfjs(pdfBuffer)
+    console.log(`[OCR] pdfjs SUCCESS: ${result.text.length} chars, ${result.pagesProcessed} pages`)
+    if (result.text.length > 200) {
+      return result
+    }
+    console.log('[OCR] pdfjs returned very little text, trying pdftotext...')
+  } catch (err) {
+    console.warn('[OCR] pdfjs failed, trying pdftotext:', err instanceof Error ? err.message : String(err))
+  }
+
+  // Stage 3: pdftotext / OCR (need temp file)
+  console.log('[OCR] Falling back to pdftotext/OCR (temp file approach)')
   const tmpPdf = path.join(os.tmpdir(), `upload_pdf_${Date.now()}.pdf`)
-  
   try {
     await writeFile(tmpPdf, pdfBuffer)
-    return await extractTextFromPdf(tmpPdf)
+    const result = await extractTextFromPdfFile(tmpPdf)
+    console.log(`[OCR] pdftotext/OCR result: ${result.text.length} chars via ${result.method}`)
+    return result
   } finally {
     await unlink(tmpPdf).catch(() => {})
   }

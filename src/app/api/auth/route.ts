@@ -21,6 +21,14 @@ const USERS: Record<string, { passwordHash: string; name: string }> = {
     passwordHash: simpleHash('Dronena2026*.'),
     name: 'J. Rodriguez',
   },
+  'Admi-VOVIEDO': {
+    passwordHash: simpleHash('Dronena2026*.'),
+    name: 'V. Oviedo',
+  },
+  'Admi-JTORRES': {
+    passwordHash: simpleHash('Dronena2026*.'),
+    name: 'J. Torres',
+  },
 }
 
 // Session token validity: 7 days

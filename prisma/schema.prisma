@@ -23,7 +23,8 @@ model Session {
 // Product catalog from Excel (Fuente 1 - Totales)
 model Product {
   id             String   @id @default(cuid())
-  code           String   // Product code (e.g., "12194", "MN076")
+  code           String   // Original 5-digit product code (e.g., "12194", "MN076") for PDF matching
+  barcode        String?  // Barcode from column H (EAN-13) for scanner matching
   description    String   // Product description
   totalRequested Int      @default(0) // Total quantity requested (from Excel)
   totalScanned   Int      @default(0) // Total quantity scanned so far

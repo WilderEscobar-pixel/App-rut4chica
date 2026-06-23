@@ -21,6 +21,7 @@ export interface SessionData {
 export interface ProductData {
   id: string
   code: string
+  barcode: string | null
   description: string
   totalRequested: number
   totalScanned: number

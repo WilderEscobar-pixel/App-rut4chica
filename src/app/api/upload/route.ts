@@ -7,6 +7,8 @@ import { parsePdfWithLLM } from '@/lib/pdf-parser-llm'
 
 interface ExcelProduct {
   code: string
+  originalCode: string | null
+  barcode: string | null
   description: string
   totalRequested: number
   bulto: number
@@ -17,37 +19,34 @@ async function parseExcelFile(buffer: Buffer): Promise<ExcelProduct[]> {
   const XLSX = await import('xlsx')
   const workbook = XLSX.read(buffer, { type: 'buffer', cellFormula: false })
 
-  // Find "Reporte" sheet, fallback to first sheet
   const reporteSheet = workbook.SheetNames.find(
     (name) => name.toLowerCase().includes('reporte')
   )
   const sheetName = reporteSheet || workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
 
-  // Read as array-of-arrays to access column H by index (0-based, H = index 7)
   const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
   if (rawRows.length < 2) return []
 
-  // Header row: find which column has the barcode code
   const headerRow = rawRows[0].map((h) => String(h || '').trim())
-  let codeColIndex = 7 // default: column H (0-indexed = 7)
 
-  for (let i = 0; i < headerRow.length; i++) {
-    const h = headerRow[i].toLowerCase()
-    if (
-      h.includes('código') && (h.includes('barra') || h.includes('cb')) ||
-      h === 'barra' || h === 'ean' || h === 'upc' ||
-      h === 'codigo barra' || h === 'código barra' || h === 'codigo de barra' || h === 'código de barra'
-    ) {
-      codeColIndex = i
-      break
-    }
-  }
+  // Column A = original 5-digit product code ("Código")
+  let codeColIndex = 0
+  // Column H = EAN-13 barcode ("Código Barra")
+  let barcodeColIndex = 7
 
-  // Build lookup maps for other columns from the header row
   const colIndex: Record<string, number> = {}
   for (let i = 0; i < headerRow.length; i++) {
-    colIndex[headerRow[i].toLowerCase()] = i
+    const h = headerRow[i].toLowerCase()
+    colIndex[h] = i
+
+    if (h === 'código' || h === 'codigo' || h === 'code' || h === 'cod') {
+      codeColIndex = i
+    }
+    if (h.includes('barra') || h === 'ean' || h === 'upc' ||
+        h === 'codigo barra' || h === 'código barra' || h === 'codigo de barra' || h === 'código de barra') {
+      barcodeColIndex = i
+    }
   }
 
   function getVal(row: unknown[], col: string): string {
@@ -69,11 +68,10 @@ async function parseExcelFile(buffer: Buffer): Promise<ExcelProduct[]> {
   for (let r = 1; r < rawRows.length; r++) {
     const row = rawRows[r]
 
-    // Column H = barcode code (the only code we use)
-    const code = String(row[codeColIndex] || '').trim()
+    const originalCode = String(row[codeColIndex] || '').trim()
+    const barcode = String(row[barcodeColIndex] || '').trim()
 
-    // Skip invalid: empty, zero, formulas, errors
-    if (!code || code === '0' || code.startsWith('=') || code.startsWith('#')) continue
+    if (!barcode || barcode === '0' || barcode.startsWith('=') || barcode.startsWith('#')) continue
 
     const description = getVal(row, 'DESCRIPCION')
       || getVal(row, 'DESCRIPCIÓN')
@@ -95,9 +93,11 @@ async function parseExcelFile(buffer: Buffer): Promise<ExcelProduct[]> {
 
     const origen = getVal(row, 'ORIGEN') || 'R'
 
-    if (code && description) {
+    if (barcode && description) {
       products.push({
-        code,
+        code: barcode,
+        originalCode: originalCode || null,
+        barcode: originalCode || null,
         description,
         totalRequested: Math.max(0, totalRequested),
         bulto: Math.max(0, bulto),
@@ -172,19 +172,24 @@ function isValidProductCode(token: string, validProductCodes?: Set<string>): boo
 /**
  * Parse the PDF text to extract worker information and their product assignments.
  *
- * The PDF from "Droguería Nena" Ruta Chica system has this format per invoice:
+ * Actual PDF format from "Droguería Nena" Ruta Chica (pdf-parse output):
  *
- *   CODIGO: 0169          RUTA: CHICA ZONA: X         ITINERARIO: 831       PAG:1 / 1
- *   MANZANO ANGEL
+ *   CODIGO: RUTA: ZONA:
+ *   DESCRIPCIÓN	CANT. CÓDIGO
  *   ...
- *   RIF:     V211418032
- *   CANT.   CÓDIGO   DESCRIPCIÓN
- *    1       19967   CEFADROXAN 500MG. X10CA
- *    1       22391   VITAMINA C BIO 500MG X60
- *   Total Unidades: 2
+ *   Serie:
+ *   212X CHICA X                          <- Worker code (before "CHICA")
+ *   ARAMBARRIO MARTINEZ, ANA KARINA       <- Worker name (next line)
+ *   ...
+ *   V198609761                            <- RIF (standalone V+digits)
+ *   ITINERARIO:
+ *   A
+ *   1826                                  <- Itinerary
+ *   ESOMEPRAZOL DAC40 X20CA	18149	1    <- DESC <tab> CODE <tab> QTY
  *
- * CRITICAL: Product lines have format: QUANTITY  PRODUCT_CODE  DESCRIPTION
- * The quantity comes FIRST, then the product code, then the description.
+ * Strategy: split by CODIGO: marker (like old proven version),
+ * extract metadata via Serie:/ITINERARIO:/RIF patterns,
+ * extract product lines from tab-separated data.
  */
 function parsePdfText(text: string, validProductCodes?: Set<string>): PdfWorker[] {
   const workers: PdfWorker[] = []
@@ -196,102 +201,166 @@ function parsePdfText(text: string, validProductCodes?: Set<string>): PdfWorker[
 
   console.log(`[PDF-Regex] Starting regex parse, text length: ${text.length}`)
 
-  // Split into invoice blocks at each CODIGO: marker
+  // Split by CODIGO: marker (lookahead — proven approach from working version)
+  // This correctly separates invoices even when page breaks don't align
   const invoiceBlocks = text.split(/(?=CODIGO\s*:)/i)
   console.log(`[PDF-Regex] Found ${invoiceBlocks.length} invoice blocks`)
 
   for (const block of invoiceBlocks) {
     if (!block.trim()) continue
 
-    // ── Extract worker code ──
-    let workerCode = ''
-    const codeMatch = block.match(/CODIGO\s*:\s*([A-Z0-9]+)/i)
-    if (codeMatch) {
-      workerCode = codeMatch[1].trim().toUpperCase()
-    }
-    if (!workerCode) continue
-
-    // ── Extract itinerary ──
-    let itinerary = '0'
-    const itMatch = block.match(/ITINERARIO\s*:\s*(\d+)/i)
-    if (itMatch) {
-      itinerary = itMatch[1].trim()
-    }
-
-    // ── Extract worker name ──
-    // In the actual PDF, the name is on the line immediately after CODIGO:
-    let workerName = ''
     const lines = block.split(/\n/)
 
-    // Find the CODIGO line and take the next non-empty line as the name
-    for (let i = 0; i < lines.length; i++) {
-      if (/CODIGO\s*:/i.test(lines[i])) {
-        // The next non-empty line is the worker name
-        for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
-          const nextLine = lines[j].trim()
-          if (!nextLine) continue
-          // Skip if it looks like metadata
-          if (/RUTA|ZONA|ITINERARIO|RIF|PAG|FACTURA|FORMATO|FECHA|RELACIÓN|ENTREGA/i.test(nextLine)) continue
-          // The name is typically uppercase, may contain commas and periods
-          if (nextLine.length > 2 && nextLine.length < 80) {
-            workerName = nextLine
+    // ── Extract worker code ──
+    // Try multiple patterns: CODIGO: XXXX (old format), Serie: / code+CHICA (new format)
+    let workerCode = ''
+
+    // Pattern 1: "CODIGO: XXXX" on a single line (old format)
+    // Exclude metadata keywords that appear after CODIGO: in broken-format PDFs
+    const codeMatch = block.match(/CODIGO\s*:\s*([A-Z0-9]+)\b/i)
+    if (codeMatch) {
+      const rawCode = codeMatch[1].trim().toUpperCase()
+      // Exclude known metadata keywords (not worker codes)
+      if (!/^(RUTA|ZONA|CHICA|PAG|ITINERARIO|FECHA|SERIE|RELACI|ENTREGA|DESCRIPCI|CREDITO|FORMATO)$/i.test(rawCode)) {
+        workerCode = rawCode
+      }
+    }
+
+    // Pattern 2: "Serie:" followed by "XXXX CHICA X" on next line (new format)
+    if (!workerCode) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim()
+        if (/^Serie\s*:?\s*$/i.test(line) && i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim()
+          const codeFromSerie = nextLine.match(/^([A-Z0-9]+)\s+CHICA/i)
+          if (codeFromSerie) {
+            workerCode = codeFromSerie[1].toUpperCase()
             break
           }
         }
-        break
+      }
+    }
+
+    // Pattern 3: Standalone "XXXX CHICA" line (direct format)
+    if (!workerCode) {
+      const metadataKeywords = /^(RUTA|ZONA|CHICA|PAG|ITINERARIO|FECHA|SERIE|RELACI|ENTREGA|DESCRIPCI|CREDITO|FORMATO|CODIGO)$/i
+      for (const line of lines) {
+        const trimmed = line.trim()
+        const directMatch = trimmed.match(/^([A-Z0-9]+)\s+CHICA\b/i)
+        if (directMatch) {
+          const rawCode = directMatch[1].toUpperCase()
+          if (!metadataKeywords.test(rawCode)) {
+            workerCode = rawCode
+            break
+          }
+        }
+      }
+    }
+
+    if (!workerCode) continue
+
+    // ── Extract worker name (line after the code+CHICA line) ──
+    let workerName = ''
+    let foundCodeLine = false
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (foundCodeLine) {
+        if (line && line.length > 3 &&
+            !/^(CODIGO|RUTA|ZONA|PAG|RIF|RELACI|SERIE|ITINERARIO|URB\b|CALLE|CARRERA|BARRIO|SECTOR|VDA\b|AVENIDA|CR |MUNICIPIO|BARQUISIMETO|LARA|ZONA POSTAL)/i.test(line) &&
+            !/^\d{2}-\d{2}-\d{4}/.test(line) &&
+            !/^[VEJ]\d{6,}/.test(line)) {
+          workerName = line
+          break
+        } else {
+          foundCodeLine = false
+        }
+      }
+      if (line.includes(workerCode) && /CHICA/i.test(line)) {
+        foundCodeLine = true
+      }
+    }
+
+    // ── Extract itinerary ──
+    let itinerary = '0'
+    // Direct format: "ITINERARIO: NNN"
+    const itMatch = block.match(/ITINERARIO\s*:\s*(\d+)/i)
+    if (itMatch) {
+      itinerary = itMatch[1].trim()
+    } else {
+      // Multi-line format: ITINERARIO:\nA\nNNN
+      for (let i = 0; i < lines.length; i++) {
+        if (/^ITINERARIO\s*:?\s*$/i.test(lines[i].trim())) {
+          for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+            const nl = lines[j].trim()
+            if (/^\d{1,6}$/.test(nl)) {
+              itinerary = nl
+              break
+            }
+            if (nl === 'A' || nl === 'B') continue
+            break
+          }
+          if (itinerary !== '0') break
+        }
       }
     }
 
     // ── Extract RIF ──
     let rif = ''
+    // Pattern 1: "RIF: XXXX"
     const rifMatch = block.match(/RIF\s*:\s*([A-Z0-9\-]+)/i)
     if (rifMatch) {
       rif = rifMatch[1].trim().toUpperCase()
+    } else {
+      // Pattern 2: Standalone V/J/E + 6-10 digits
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (/^[VEJ]\d{6,10}$/i.test(trimmed)) {
+          rif = trimmed.toUpperCase()
+          break
+        }
+      }
     }
 
-    // ── Extract product assignments from the block ──
+    // ── Extract product assignments ──
     const assignments: Array<{ productCode: string; quantity: number }> = []
 
     for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+
       // Skip header/metadata lines
-      if (/^\s*$/.test(line)) continue
-      if (/CODIGO|ITINERARIO|RIF|RUTA|ZONA|PAG:|FECHA|SERIE|RELACIÓN|ENTREGA|CRÉDITO|CREDITO|SIN DERECHO|Total Unidades/i.test(line)) continue
-      if (/^CANT\./i.test(line)) continue  // Skip the "CANT.   CÓDIGO   DESCRIPCIÓN" header
+      if (/^(CODIGO|RUTA|ZONA|PAG|RIF|RELACI|SERIE|ITINERARIO|DESCRIPCI|CANT\.|Total Unidades|Sin Derecho|Fecha)/i.test(trimmed)) continue
+      if (/^\d{2}-\d{2}-\d{4}/.test(trimmed)) continue
+      if (/^[VEJ]\d{6,10}$/i.test(trimmed)) continue
+      if (/^(URB\b|CALLE|CARRERA|BARRIO|SECTOR|VDA\b|CR |AVENIDA|MUNICIPIO|BARQUISIMETO|LARA|ZONA POSTAL)/i.test(trimmed)) continue
 
-      // ── KEY: The actual PDF format is: QUANTITY  PRODUCT_CODE  DESCRIPTION ──
-      // e.g., " 1       19967   CEFADROXAN 500MG. X10CA"
-      // e.g., " 4       17280   COLGATE MAX.PROT AC 90GR"
-      // e.g., " 2       GN101   LOSARTAN P.GN50MG. X30"
-
-      // Pattern: Line starts with a number (quantity), then spaces, then a product code
-      const productLineMatch = line.match(/^\s*(\d{1,3})\s+([A-Z0-9]{2,10})\s/i)
-      if (productLineMatch) {
-        const qty = parseInt(productLineMatch[1], 10)
-        const potentialCode = productLineMatch[2].toUpperCase()
-
-        if (qty > 0 && qty <= 999 && isValidProductCode(potentialCode, validProductCodes)) {
-          assignments.push({
-            productCode: potentialCode,
-            quantity: qty,
-          })
-          continue
+      // ── Primary format: tab-separated ──
+      // DESCRIPTION \t CODE \t QUANTITY
+      const parts = trimmed.split(/\t/)
+      if (parts.length >= 3) {
+        const last2 = parts.slice(-2).map(s => s.trim())
+        // Try both orders: code-then-qty and qty-then-code
+        for (const [a, b] of [[last2[0], last2[1]], [last2[1], last2[0]]]) {
+          const qtyNum = parseInt(a, 10)
+          if (/^\d{1,3}$/.test(a) && qtyNum > 0 && qtyNum <= 999 &&
+              isValidProductCode(b, validProductCodes)) {
+            assignments.push({ productCode: b.toUpperCase(), quantity: qtyNum })
+            break
+          }
         }
+        if (assignments.length > 0 && assignments[assignments.length - 1].productCode === parts[parts.length - 2]?.trim().toUpperCase()) continue
+        if (assignments.length > 0 && assignments[assignments.length - 1].productCode === parts[parts.length - 1]?.trim().toUpperCase()) continue
       }
 
-      // Fallback pattern: Product code at the start of the line (for other PDF formats)
-      const codeAtStartMatch = line.match(/^\s*([A-Z0-9]{3,10})\s{2,}/)
-      if (codeAtStartMatch) {
-        const potentialCode = codeAtStartMatch[1].toUpperCase()
-        if (isValidProductCode(potentialCode, validProductCodes)) {
-          // Look for quantity at end of line
-          const endQtyMatch = line.match(/\s+(\d{1,3})\s*$/)
-          const qty = endQtyMatch ? parseInt(endQtyMatch[1], 10) : 1
-          if (qty > 0 && qty <= 999) {
-            assignments.push({
-              productCode: potentialCode,
-              quantity: qty,
-            })
-            continue
+      // ── Fallback: space-separated QUANTITY CODE DESCRIPTION ──
+      const qtyCodeMatch = trimmed.match(/^\s*(\d{1,3})\s{2,}([A-Z0-9]{2,10})\b/i)
+      if (qtyCodeMatch) {
+        const qty = parseInt(qtyCodeMatch[1], 10)
+        const potentialCode = qtyCodeMatch[2].toUpperCase()
+        if (qty > 0 && qty <= 999 && isValidProductCode(potentialCode, validProductCodes)) {
+          // Avoid duplicates
+          if (!assignments.some(a => a.productCode === potentialCode)) {
+            assignments.push({ productCode: potentialCode, quantity: qty })
           }
         }
       }
@@ -399,10 +468,15 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Upload] Total unique products from ${excelFiles.length} Excel file(s): ${allProducts.length}`)
 
-    // Build a set of valid product codes for PDF matching
+    // Build a set of valid product codes for PDF matching (includes 5-digit codes from column A)
     const validProductCodes = new Set(allProducts.map(p => p.code.toUpperCase()))
+    for (const p of allProducts) {
+      if (p.originalCode) validProductCodes.add(p.originalCode.toUpperCase())
+    }
 
     // Create products in database
+    // code = EAN-13 barcode (column H) for scanning/display
+    // barcode = original 5-digit code (column A) for PDF matching
     for (const p of allProducts) {
       try {
         await db.product.upsert({
@@ -411,6 +485,7 @@ export async function POST(request: NextRequest) {
           },
           create: {
             code: p.code,
+            barcode: p.originalCode,
             description: p.description,
             totalRequested: p.totalRequested,
             bulto: p.bulto,
@@ -422,6 +497,7 @@ export async function POST(request: NextRequest) {
             totalRequested: p.totalRequested,
             bulto: p.bulto,
             origen: p.origen,
+            barcode: p.originalCode,
           },
         })
         productsCreated++
@@ -461,7 +537,7 @@ export async function POST(request: NextRequest) {
         try {
           const ocrResult = await processPdfBuffer(pdfFiles[i])
           if (i === 0) {
-            ocrMethod = ocrResult.method === 'pdftotext' ? 'pdftotext' : 'ocr'
+            ocrMethod = ocrResult.method
             ocrPages = ocrResult.pagesProcessed
             ocrConfidence = Math.round(ocrResult.confidence * 100)
           }
@@ -628,27 +704,33 @@ export async function POST(request: NextRequest) {
           }
 
           for (const a of w.assignments) {
-            // Find the product - try exact match first, then case-insensitive
-            let product = await db.product.findUnique({
-              where: { code_sessionId: { code: a.productCode, sessionId } },
+            const pdfCode = a.productCode.toUpperCase()
+
+            // Find product by matching PDF code against:
+            // 1. product.code (barcode EAN-13) - direct scan match
+            // 2. product.barcode (original 5-digit code from column A) - PDF match
+            let product = await db.product.findFirst({
+              where: {
+                sessionId,
+                OR: [
+                  { code: pdfCode },
+                  { barcode: pdfCode },
+                  { code: { equals: pdfCode } },
+                ],
+              },
             })
 
-            if (!product) {
-              const products = await db.product.findMany({
+            // Try without leading zeros
+            if (!product && /^0+\d+$/.test(pdfCode)) {
+              const stripped = pdfCode.replace(/^0+/, '')
+              product = await db.product.findFirst({
                 where: {
                   sessionId,
-                  code: { equals: a.productCode },
+                  OR: [
+                    { code: stripped },
+                    { barcode: stripped },
+                  ],
                 },
-                take: 1,
-              })
-              product = products[0] || null
-            }
-
-            // Try without leading zeros
-            if (!product && /^0+\d+$/.test(a.productCode)) {
-              const strippedCode = a.productCode.replace(/^0+/, '')
-              product = await db.product.findUnique({
-                where: { code_sessionId: { code: strippedCode, sessionId } },
               })
             }
 
@@ -669,7 +751,7 @@ export async function POST(request: NextRequest) {
                 create: {
                   workerId: worker.id,
                   productId: product.id,
-                  productCode: a.productCode,
+                  productCode: product.code,
                   quantity: a.quantity,
                   sessionId,
                 },
