@@ -719,7 +719,7 @@ function UploadPanel() {
         toast.error('Los archivos PDF deben ser .pdf')
         return
       }
-      setPdfFiles(prev => [...prev, ...validFiles].slice(0, 2))
+      setPdfFiles(prev => [...prev, ...validFiles])
     }
   }
 
@@ -821,7 +821,7 @@ function UploadPanel() {
               onChange={(e) => {
                 const files = e.target.files ? Array.from(e.target.files) : []
                 const validFiles = files.filter(f => f.name.endsWith('.pdf'))
-                setPdfFiles(prev => [...prev, ...validFiles].slice(0, 2))
+                setPdfFiles(prev => [...prev, ...validFiles])
                 // Reset input so same file can be re-selected
                 e.target.value = ''
               }}
@@ -843,12 +843,10 @@ function UploadPanel() {
                     </button>
                   </div>
                 ))}
-                {pdfFiles.length < 2 && (
-                  <p className="text-[10px] text-muted-foreground">+ Agregar otro PDF</p>
-                )}
+                <p className="text-[10px] text-muted-foreground">+ Agregar otro PDF</p>
               </div>
             ) : (
-              <p className="text-xs font-medium">Archivos PDF (OCR automático) — máx. 2</p>
+              <p className="text-xs font-medium">Archivos PDF (OCR automático) — sin límite</p>
             )}
             {pdfFiles.length > 0 && (
               <Badge variant="secondary" className="mt-1.5 text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
