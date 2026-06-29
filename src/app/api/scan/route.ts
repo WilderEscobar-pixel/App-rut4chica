@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { barcode, sessionId } = body
+    const { barcode, sessionId, workerCode } = body
     const manualQty = Math.max(body.quantity || 1, 1) // default to 1, minimum 1
 
     if (!barcode || !sessionId) {
@@ -43,6 +43,18 @@ export async function POST(request: NextRequest) {
         { error: 'barcode and sessionId are required' },
         { status: 400 }
       )
+    }
+
+    // Step 0: If workerCode provided, resolve worker
+    let targetWorker: { id: string; code: string; name: string; itinerary: string } | null = null
+    if (workerCode) {
+      targetWorker = await db.worker.findUnique({ where: { code: workerCode }, select: { id: true, code: true, name: true, itinerary: true } })
+      if (!targetWorker) {
+        return NextResponse.json(
+          { error: `Trabajador "${workerCode}" no encontrado` },
+          { status: 404 }
+        )
+      }
     }
 
     // Step 1: Find the product by matching barcode to product code
@@ -80,6 +92,117 @@ export async function POST(request: NextRequest) {
           totalScanned: product.totalScanned,
           status: product.status,
         },
+      })
+    }
+
+    // ─── WORKER-SPECIFIC MODE ──────────────────────────────────────
+    if (targetWorker) {
+      const assignment = await db.assignment.findFirst({
+        where: { workerId: targetWorker.id, productId: product.id, sessionId },
+        include: { worker: true },
+      })
+
+      if (!assignment) {
+        return NextResponse.json(
+          { error: `El producto "${product.code}" no está asignado al trabajador "${workerCode}"` },
+          { status: 404 }
+        )
+      }
+
+      if (assignment.scannedQuantity >= assignment.quantity) {
+        return NextResponse.json(
+          { error: `El trabajador "${workerCode}" ya completó este producto (${assignment.scannedQuantity}/${assignment.quantity})` },
+          { status: 409 }
+        )
+      }
+
+      const workerCapacity = assignment.quantity - assignment.scannedQuantity
+      const productRemaining = product.totalRequested - product.totalScanned
+      const allocatableQty = Math.min(manualQty, productRemaining, workerCapacity)
+
+      const newScannedQty = assignment.scannedQuantity + allocatableQty
+      const assignmentComplete = newScannedQty >= assignment.quantity
+      const newAssignmentStatus = assignmentComplete ? 'complete' : 'assigned'
+
+      const newProductScanned = product.totalScanned + allocatableQty
+      const productComplete = newProductScanned >= product.totalRequested
+      const newProductStatus = productComplete ? 'complete' : 'partial'
+
+      await db.$transaction([
+        db.assignment.update({
+          where: { id: assignment.id },
+          data: { scannedQuantity: newScannedQty, status: newAssignmentStatus },
+        }),
+        db.product.update({
+          where: { id: product.id },
+          data: { totalScanned: newProductScanned, status: newProductStatus },
+        }),
+      ])
+
+      await db.scanEvent.create({
+        data: {
+          barcode,
+          productCode: product.code,
+          workerId: targetWorker.id,
+          itinerary: targetWorker.itinerary,
+          assignedTo: targetWorker.name,
+          sessionId,
+          quantity: allocatableQty,
+        },
+      })
+
+      const otherAssignments = await db.assignment.findMany({
+        where: { workerId: targetWorker.id, sessionId, id: { not: { equals: assignment.id } } },
+        include: { product: true },
+        orderBy: { createdAt: 'asc' },
+      })
+
+      return NextResponse.json({
+        status: 'assigned',
+        message: `${allocatableQty} ud(s) → ${targetWorker.name} (${targetWorker.code}) - ${product.description}`,
+        scannedCount: allocatableQty,
+        quantity: manualQty,
+        workerMode: true,
+        assignment: {
+          id: assignment.id,
+          workerName: targetWorker.name,
+          workerCode: targetWorker.code,
+          itinerary: targetWorker.itinerary,
+          productCode: product.code,
+          productDescription: product.description,
+          quantity: assignment.quantity,
+          previousScannedQuantity: assignment.scannedQuantity,
+          allocatedQuantity: allocatableQty,
+          scannedQuantity: newScannedQty,
+          status: newAssignmentStatus,
+        },
+        allAssignments: [{
+          id: assignment.id,
+          workerName: targetWorker.name,
+          workerCode: targetWorker.code,
+          itinerary: targetWorker.itinerary,
+          productCode: product.code,
+          productDescription: product.description,
+          quantity: assignment.quantity,
+          previousScannedQuantity: assignment.scannedQuantity,
+          allocatedQuantity: allocatableQty,
+          scannedQuantity: newScannedQty,
+          status: newAssignmentStatus,
+        }],
+        product: {
+          code: product.code,
+          description: product.description,
+          totalRequested: product.totalRequested,
+          totalScanned: newProductScanned,
+          status: newProductStatus,
+        },
+        otherWorkerProducts: otherAssignments.map((a) => ({
+          productCode: a.productCode,
+          productDescription: a.product.description,
+          quantity: a.quantity,
+          scannedQuantity: a.scannedQuantity,
+          status: a.status,
+        })),
       })
     }
 

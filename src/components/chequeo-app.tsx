@@ -1345,6 +1345,8 @@ function AIChatPanel() {
 function WorkerSearchPanel() {
   const session = useAppStore((s) => s.session)
   const checkWorkerProduct = useAppStore((s) => s.checkWorkerProduct)
+  const activeWorkerCode = useAppStore((s) => s.activeWorkerCode)
+  const setActiveWorkerCode = useAppStore((s) => s.setActiveWorkerCode)
   const [workerSearch, setWorkerSearch] = useState('')
   const [workerResult, setWorkerResult] = useState<{
     code: string
@@ -1393,8 +1395,10 @@ function WorkerSearchPanel() {
       const data = await res.json()
       if (data.success && data.worker) {
         setWorkerResult(data.worker)
+        setActiveWorkerCode(data.worker.code)
       } else {
         setWorkerResult(null)
+        setActiveWorkerCode(null)
         toast.error(data.error || `Trabajador "${code}" no encontrado`)
       }
     } catch {
@@ -1402,7 +1406,7 @@ function WorkerSearchPanel() {
     } finally {
       setIsSearching(false)
     }
-  }, [session?.id])
+  }, [session?.id, setActiveWorkerCode])
 
   const handleCheckProduct = useCallback(async (productCode: string) => {
     if (!workerResult || checkingCode) return
@@ -1471,7 +1475,13 @@ function WorkerSearchPanel() {
               <Input
                 placeholder="Código de trabajador..."
                 value={workerSearch}
-                onChange={(e) => setWorkerSearch(e.target.value)}
+                onChange={(e) => {
+                  setWorkerSearch(e.target.value)
+                  if (!e.target.value.trim()) {
+                    setWorkerResult(null)
+                    setActiveWorkerCode(null)
+                  }
+                }}
                 onKeyDown={handleSearchKeyDown}
                 className="pl-8 h-8 text-xs rounded-xl border-amber-400/30 focus:border-amber-500"
               />
@@ -1485,6 +1495,26 @@ function WorkerSearchPanel() {
               {isSearching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
             </Button>
           </div>
+
+          {activeWorkerCode && (
+            <div className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/30 text-xs">
+              <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+              <span className="text-blue-700 dark:text-blue-400 font-medium">
+                Modo trabajador activo: {activeWorkerCode}
+              </span>
+              <span className="text-muted-foreground">— escaneos solo para este trabajador</span>
+              <button
+                onClick={() => {
+                  setWorkerSearch('')
+                  setWorkerResult(null)
+                  setActiveWorkerCode(null)
+                }}
+                className="ml-auto text-muted-foreground hover:text-red-500 transition-colors"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
 
           <Button
             variant="ghost"

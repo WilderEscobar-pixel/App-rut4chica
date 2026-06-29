@@ -71,6 +71,7 @@ export interface ScanResult {
   message: string
   scannedCount?: number
   quantity?: number
+  workerMode?: boolean
   assignment?: {
     id: string
     workerName: string
@@ -230,6 +231,7 @@ interface AppState {
   // Scanner state
   isScannerListening: boolean
   isSocketConnected: boolean
+  activeWorkerCode: string | null
 
   // Socket
   socket: Socket | null
@@ -250,6 +252,7 @@ interface AppState {
   resetSession: (force?: boolean) => Promise<boolean>
   checkWorkerProduct: (workerCode: string, productCode: string) => Promise<CheckAssignmentResult | null>
   setScannerListening: (listening: boolean) => void
+  setActiveWorkerCode: (code: string | null) => void
   initSocket: () => void
   disconnectSocket: () => void
 }
@@ -278,6 +281,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   ocrConfidence: null,
   isScannerListening: false,
   isSocketConnected: false,
+  activeWorkerCode: null,
   socket: null,
 
   // ─── Session ─────────────────────────────────────────────────────
@@ -413,13 +417,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ─── Scan ────────────────────────────────────────────────────────
 
   scanBarcode: async (barcode: string, quantity?: number) => {
-    const { session } = get()
+    const { session, activeWorkerCode } = get()
     if (!session) return null
 
     set({ isScanning: true })
     try {
       const body: Record<string, unknown> = { barcode, sessionId: session.id }
       if (quantity && quantity > 1) body.quantity = quantity
+      if (activeWorkerCode) body.workerCode = activeWorkerCode
 
       const res = await fetch('/api/scan', {
         method: 'POST',
@@ -463,15 +468,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ─── Manual Scan (product code + quantity) ────────────────────────
 
   manualScan: async (productCode: string, quantity: number) => {
-    const { session } = get()
+    const { session, activeWorkerCode } = get()
     if (!session || quantity < 1) return null
 
     set({ isScanning: true })
     try {
+      const body: Record<string, unknown> = { barcode: productCode, sessionId: session.id, quantity }
+      if (activeWorkerCode) body.workerCode = activeWorkerCode
+
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ barcode: productCode, sessionId: session.id, quantity }),
+        body: JSON.stringify(body),
       })
 
       // Safely parse JSON - handle non-JSON responses gracefully
@@ -746,6 +754,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setScannerListening: (listening: boolean) => {
     set({ isScannerListening: listening })
+  },
+
+  setActiveWorkerCode: (code: string | null) => {
+    set({ activeWorkerCode: code })
   },
 
   // ─── WebSocket ───────────────────────────────────────────────────
