@@ -113,6 +113,29 @@ export interface ScanResult {
   barcode?: string
 }
 
+export interface CheckAssignmentResult {
+  success: boolean
+  alreadyComplete?: boolean
+  message: string
+  assignment?: {
+    id: string
+    productCode: string
+    quantity: number
+    scannedQuantity: number
+    status: string
+  }
+  product?: {
+    totalScanned: number
+    totalRequested: number
+    status: string
+  }
+  workerComplete?: boolean
+  workerProgress?: {
+    completed: number
+    total: number
+  }
+}
+
 export interface UploadResult {
   success: boolean
   results: {
@@ -225,6 +248,7 @@ interface AppState {
   fetchReport: () => Promise<ReportData | null>
   fetchRecentScans: () => Promise<void>
   resetSession: (force?: boolean) => Promise<boolean>
+  checkWorkerProduct: (workerCode: string, productCode: string) => Promise<CheckAssignmentResult | null>
   setScannerListening: (listening: boolean) => void
   initSocket: () => void
   disconnectSocket: () => void
@@ -667,6 +691,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       return false
     } finally {
       set({ isResetting: false })
+    }
+  },
+
+  // ─── Worker Product Check ─────────────────────────────────────────
+
+  checkWorkerProduct: async (workerCode: string, productCode: string) => {
+    const { session } = get()
+    if (!session) return null
+
+    try {
+      const res = await fetch('/api/assignments/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workerCode, productCode, sessionId: session.id }),
+      })
+
+      const data: CheckAssignmentResult = await res.json()
+
+      if (data.success) {
+        await get().fetchProducts()
+        await get().fetchRecentScans()
+      }
+
+      return data
+    } catch (error) {
+      console.error('Error checking worker product:', error)
+      return null
     }
   },
 

@@ -11,12 +11,12 @@ import {
   RotateCcw, Zap, Eye, Sparkles, Volume2, VolumeX,
   MessageSquare, Send, Bot, User, Brain,
   PlusCircle, Minus, Plus, Hash, Save, PlayCircle,
-  LogOut
+  LogOut, Circle
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
 
-import { useAppStore, type ProductData, type AssignmentData, type ScanResult } from '@/lib/store'
+import { useAppStore, type ProductData, type AssignmentData, type ScanResult, type CheckAssignmentResult } from '@/lib/store'
 import { useScanner } from '@/hooks/use-scanner'
 import { playSuccessSound, playAlertSound, playCompleteSound } from '@/lib/audio-feedback'
 
@@ -1344,6 +1344,7 @@ function AIChatPanel() {
 // WorkerSearchPanel - Search workers by code to see their product assignments
 function WorkerSearchPanel() {
   const session = useAppStore((s) => s.session)
+  const checkWorkerProduct = useAppStore((s) => s.checkWorkerProduct)
   const [workerSearch, setWorkerSearch] = useState('')
   const [workerResult, setWorkerResult] = useState<{
     code: string
@@ -1351,6 +1352,7 @@ function WorkerSearchPanel() {
     itinerary: string
     rif: string
     assignments: Array<{
+      id: string
       productCode: string
       productName: string
       quantity: number
@@ -1365,6 +1367,7 @@ function WorkerSearchPanel() {
     completedProducts: number
   } | null>(null)
   const [isSearching, setIsSearching] = useState(false)
+  const [checkingCode, setCheckingCode] = useState<string | null>(null)
   const [workerList, setWorkerList] = useState<Array<{
     id: string
     code: string
@@ -1400,6 +1403,28 @@ function WorkerSearchPanel() {
       setIsSearching(false)
     }
   }, [session?.id])
+
+  const handleCheckProduct = useCallback(async (productCode: string) => {
+    if (!workerResult || checkingCode) return
+    setCheckingCode(productCode)
+    try {
+      const result = await checkWorkerProduct(workerResult.code, productCode)
+      if (result?.success) {
+        if (result.alreadyComplete) {
+          toast.info('Este producto ya estaba completo')
+        } else {
+          toast.success(result.message || 'Producto chequeado')
+          searchWorker(workerResult.code)
+        }
+      } else {
+        toast.error(result?.message || 'Error al chequear producto')
+      }
+    } catch {
+      toast.error('Error al chequear producto')
+    } finally {
+      setCheckingCode(null)
+    }
+  }, [workerResult, checkingCode, checkWorkerProduct, searchWorker])
 
   const loadAllWorkers = useCallback(async () => {
     if (!session?.id) return
@@ -1481,10 +1506,31 @@ function WorkerSearchPanel() {
                     Código: {workerResult.code} • Itinerario: {workerResult.itinerary}
                   </p>
                 </div>
-                <Badge variant="outline" className="text-[10px] rounded-lg">
-                  {workerResult.completedProducts}/{workerResult.totalProducts} completos
+                <Badge
+                  variant={workerResult.completedProducts === workerResult.totalProducts ? "default" : "outline"}
+                  className={`text-[10px] rounded-lg ${
+                    workerResult.completedProducts === workerResult.totalProducts
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-300'
+                      : ''
+                  }`}
+                >
+                  {workerResult.completedProducts === workerResult.totalProducts ? (
+                    <span className="flex items-center gap-0.5">
+                      <CheckCircle2 className="h-3 w-3" /> Completo
+                    </span>
+                  ) : (
+                    `${workerResult.completedProducts}/${workerResult.totalProducts} completos`
+                  )}
                 </Badge>
               </div>
+
+              {/* Worker Complete Banner */}
+              {workerResult.completedProducts === workerResult.totalProducts && workerResult.totalProducts > 0 && (
+                <div className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-emerald-100/70 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800/50 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Todos los productos chequeados - Trabajador Completo
+                </div>
+              )}
 
               {/* Progress bar */}
               <div className="space-y-1">
@@ -1503,9 +1549,9 @@ function WorkerSearchPanel() {
                 {workerResult.assignments.map((a, i) => (
                   <div
                     key={`${a.productCode}-${i}`}
-                    className="flex items-center justify-between py-1 px-2 rounded-lg text-xs hover:bg-white/50 dark:hover:bg-slate-800/50"
+                    className="flex items-center justify-between py-1 px-2 rounded-lg text-xs hover:bg-white/50 dark:hover:bg-slate-800/50 group"
                   >
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <div className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${
                         a.status === 'complete' ? 'bg-emerald-500' :
                         a.status === 'pending' ? 'bg-slate-300' :
@@ -1515,9 +1561,27 @@ function WorkerSearchPanel() {
                       <span className="font-mono text-[10px] text-muted-foreground flex-shrink-0">{a.productCode}</span>
                       <span className="truncate">{a.productName}</span>
                     </div>
-                    <span className="flex-shrink-0 font-medium ml-2">
-                      {a.scannedQuantity}/{a.quantity}
-                    </span>
+                    <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+                      <span className="font-medium">
+                        {a.scannedQuantity}/{a.quantity}
+                      </span>
+                      {a.status !== 'complete' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-5 w-5 p-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-emerald-100 dark:hover:bg-emerald-900/30"
+                          onClick={(e) => { e.stopPropagation(); handleCheckProduct(a.productCode) }}
+                          disabled={checkingCode === a.productCode}
+                          title="Chequear producto"
+                        >
+                          {checkingCode === a.productCode ? (
+                            <Loader2 className="h-3 w-3 animate-spin text-emerald-600" />
+                          ) : (
+                            <CheckCircle2 className="h-3 w-3 text-muted-foreground hover:text-emerald-600" />
+                          )}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
