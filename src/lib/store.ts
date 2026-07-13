@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { io, Socket } from 'socket.io-client'
+
 
 // ─── Type Definitions ────────────────────────────────────────────────
 
@@ -230,11 +230,11 @@ interface AppState {
 
   // Scanner state
   isScannerListening: boolean
-  isSocketConnected: boolean
+  isPolling: boolean
   activeWorkerCode: string | null
 
-  // Socket
-  socket: Socket | null
+  // Polling
+  pollingIntervalId: NodeJS.Timeout | null
 
   // Actions
   fetchSession: () => Promise<void>
@@ -253,8 +253,8 @@ interface AppState {
   checkWorkerProduct: (workerCode: string, productCode: string) => Promise<CheckAssignmentResult | null>
   setScannerListening: (listening: boolean) => void
   setActiveWorkerCode: (code: string | null) => void
-  initSocket: () => void
-  disconnectSocket: () => void
+  startPolling: () => void
+  stopPolling: () => void
 }
 
 // ─── Zustand Store ───────────────────────────────────────────────────
@@ -280,9 +280,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   ocrPages: null,
   ocrConfidence: null,
   isScannerListening: false,
-  isSocketConnected: false,
+  isPolling: false,
   activeWorkerCode: null,
-  socket: null,
+  pollingIntervalId: null,
 
   // ─── Session ─────────────────────────────────────────────────────
 
@@ -760,76 +760,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ activeWorkerCode: code })
   },
 
-  // ─── WebSocket ───────────────────────────────────────────────────
+  // ─── Polling ───────────────────────────────────────────────────
 
-  initSocket: () => {
-    const existingSocket = get().socket
-    if (existingSocket?.connected) return
+  startPolling: () => {
+    const existingInterval = get().pollingIntervalId
+    if (existingInterval) return
 
-    const socket = io('/?XTransformPort=3003', {
-      path: '/',
-      transports: ['polling', 'websocket'],
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-    })
-
-    socket.on('connect', () => {
-      console.log('[WS] Connected to scanner sync service')
-      set({ isSocketConnected: true })
-    })
-
-    socket.on('disconnect', () => {
-      console.log('[WS] Disconnected from scanner sync service')
-      set({ isSocketConnected: false })
-    })
-
-    socket.on('scan:event', (data: ScanEventData & { timestamp: string }) => {
-      console.log('[WS] Scan event:', data)
-      set((state) => ({
-        scanEvents: [
-          {
-            id: data.id || `ws-${Date.now()}`,
-            barcode: data.barcode,
-            productCode: data.productCode,
-            workerId: data.workerId || null,
-            itinerary: data.itinerary || null,
-            assignedTo: data.assignedTo || null,
-            sessionId: data.sessionId || state.session?.id || '',
-            createdAt: data.timestamp || new Date().toISOString(),
-          },
-          ...state.scanEvents,
-        ].slice(0, 20),
-      }))
-    })
-
-    socket.on('product:updated', () => {
-      console.log('[WS] Product updated, refreshing...')
+    console.log('[Polling] Started syncing...')
+    const intervalId = setInterval(() => {
       get().fetchProducts()
-    })
+      get().fetchRecentScans()
+    }, 3000)
 
-    socket.on('session:updated', (data: { sessionId: string; status: string }) => {
-      console.log('[WS] Session updated:', data)
-      const { session } = get()
-      if (session && session.id === data.sessionId) {
-        set({ session: { ...session, status: data.status } })
-      }
-    })
-
-    socket.on('session:finalized', () => {
-      console.log('[WS] Session finalized')
-      get().fetchProducts()
-      get().fetchReport()
-    })
-
-    set({ socket })
+    set({ pollingIntervalId: intervalId, isPolling: true })
   },
 
-  disconnectSocket: () => {
-    const { socket } = get()
-    if (socket) {
-      socket.disconnect()
-      set({ socket: null, isSocketConnected: false })
+  stopPolling: () => {
+    const { pollingIntervalId } = get()
+    if (pollingIntervalId) {
+      clearInterval(pollingIntervalId)
+      console.log('[Polling] Stopped')
+      set({ pollingIntervalId: null, isPolling: false })
     }
   },
 }))
